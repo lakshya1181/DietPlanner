@@ -277,7 +277,8 @@ export const DEFAULT_SETTINGS = {
         ]
       }
     ],
-    "water": "8-10 Glasses / Day"
+    "water": "8-10 Glasses / Day",
+    "allowedFood": []
   },
   "reminders": {
     "planEndDaysBefore": 1,
@@ -326,7 +327,8 @@ export const DEFAULT_SETTINGS = {
     "callSummary": false,
     "exercise": true,
     "servingGuide": true,
-    "guidelines": true
+    "guidelines": true,
+    "allowedFood": true
   }
 };
 
@@ -345,5 +347,6 @@ export const PDF_SECTIONS = [
   ["exercise", "Exercise routine"],
   ["servingGuide", "Serving guide"],
   ["guidelines", "General guidelines (Avoid / Prefer)"],
+  ["allowedFood", "Allowed food"],
   ["recipes", "Recipes chosen for the plan"],
 ];

@@ -275,7 +275,7 @@
   // Fill in anything missing in older or hand-edited records so the PDF never crashes.
   function normPlan(plan) {
     return { ...plan, days: Math.min(Math.max(Math.round(+plan.days) || 7, 1), 7), meals: plan.meals || {}, exercise: (plan.exercise || []).filter(Boolean),
-      servingSizes: plan.servingSizes || [], guidelines: (plan.guidelines || []).map((g) => ({ ...g, items: g.items || [] })), slotModes: plan.slotModes || {} };
+      servingSizes: plan.servingSizes || [], allowedFood: (Array.isArray(plan.allowedFood) ? plan.allowedFood : []).map((x) => String(x).trim()).filter(Boolean), guidelines: (plan.guidelines || []).map((g) => ({ ...g, items: g.items || [] })), slotModes: plan.slotModes || {} };
   }
   function normClient(c) {
     return { ...c, name: c.name || "Client", heightFt: +c.heightFt || 0, heightIn: +c.heightIn || 0,
@@ -503,6 +503,12 @@
       ...exerciseBlock,
       ...(sectionOn(plan, settings, "servingGuide") && servingTiles.length ? [heading("Serving Guide", t, [0, 18, 0, 12]), ...servingTiles] : []),
       ...(sectionOn(plan, settings, "guidelines") && groups.length ? [heading("General Guidelines", t, [0, 16, 0, 12]), { columns: groups.map(guideCard), columnGap: 14 }] : []),
+      // Allowed food: its own heading and its own "Show in PDF" tick; items in 3 columns
+      ...(sectionOn(plan, settings, "allowedFood") && plan.allowedFood.length ? (() => {
+        const items = plan.allowedFood, per = Math.ceil(items.length / 3), cols = [0, 1, 2].map((c) => items.slice(c * per, c * per + per)).filter((x) => x.length);
+        const col = (list) => ({ table: { widths: [12, "*"], body: list.map((it) => [{ ...badge("tick", t.teal, 10), margin: [0, 2, 0, 0] }, { text: cellRuns(it, t, false), fontSize: 9.5 }]) }, layout: "noBorders" });
+        return [heading("Allowed Food", t, [0, 16, 0, 12]), { unbreakable: items.length <= 30, table: { widths: ["*"], body: [[{ columns: cols.map(col), columnGap: 14, fillColor: "#EEF7F6", margin: [12, 10, 12, 10] }]] }, layout: "noBorders" }];
+      })() : []),
     ];
     // Recipes picked for this plan (passed in as plan._recipes), one page each
     if (sectionOn(plan, settings, "recipes") && (plan._recipes || []).length) {

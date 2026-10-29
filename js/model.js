@@ -44,14 +44,18 @@ export function nextWeekNumber(clientId) {
 export function newPlanFor(client, pattern) {
   const s = store.settings, d = s.defaults;
   const prev = store.plansFor(client.id)[0];
+  // the client's own meal timings (set by their first plan, updated whenever a time is changed in their plan);
+  // clients from before this existed take them from their latest plan; a brand-new client gets the type's defaults
+  const times = structuredClone(client.slotTimes || prev?.slotTimes || {});
   let start = prev ? addDaysIso(planEnd(prev), 1) : todayIso();
   if (start < todayIso()) start = todayIso();
   for (const h of [...(client.program?.holds || [])].sort((x, y) => x.from.localeCompare(y.from)))
     if (start >= h.from && start <= h.to) start = addDaysIso(h.to, 1);   // never start inside a hold
   return {
     clientId: client.id, pattern, days: 7, startDate: start,
-    weekNumber: nextWeekNumber(client.id), slotModes: {}, slotTimes: {}, meals: {},
+    weekNumber: nextWeekNumber(client.id), slotModes: {}, slotTimes: times, meals: {},
     exercise: structuredClone(d.exercise), servingSizes: structuredClone(d.servingSizes), guidelines: structuredClone(d.guidelines),
+    allowedFood: structuredClone(d.allowedFood || []),
     notes: "", reminder: true, pdfSections: { ...s.pdfSections },
   };
 }

@@ -130,7 +130,13 @@ async function linkAccount() {
 }
 export async function connect() {
   stopped = false;
-  await G.signIn();
+  await G.signIn({ intent: "connect" });
+  await linkAccount();
+  await syncNow();
+}
+// After the installed app came back from Google's sign-in page (see google.js consumeRedirect).
+export async function afterRedirect(intent) {
+  stopped = false;
   await linkAccount();
   await syncNow();
 }
@@ -139,7 +145,7 @@ export async function switchAccount() {
   stopped = false;
   const prev = G.account();
   G.signOut({ revoke: false });
-  try { await G.signIn({ prompt: "select_account", hint: null }); }
+  try { await G.signIn({ prompt: "select_account", hint: null, intent: "switch" }); }
   catch (e) { if (prev) local.set("googleAccount", prev); throw e; }
   await linkAccount();
   await syncNow();

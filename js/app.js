@@ -69,6 +69,7 @@ function renderNav() {
 
 let lastHash = null, prevHash = null, replacing = false, curIdx = 0;
 async function route(force) {
+  if (/[#&](access_token|id_token)=/.test(location.hash)) { history.replaceState(null, "", location.pathname + "#/"); }   // never keep a token in the address
   const h = location.hash || "#/";
   if (!force && h === lastHash) return;
   const stay = !force && ((modalsDirty() && !(await confirmBox("Discard changes?", "What you typed in the open window will be lost.", "Discard")))
@@ -116,6 +117,7 @@ function renderBanner(s) {
   b.querySelector("#reconnect")?.addEventListener("click", connectOrSync);
 }
 export async function connectOrSync() {
+  if (!G.hasToken() && G.useRedirect() && (store._editorDirty || modalsDirty())) { toast("Save or close what you're editing first – signing in leaves this screen for a moment.", 4500); return; }
   try { if (!G.hasToken()) await sync.connect(); else await sync.syncNow(); if (sync.syncState().status === "ok") toast(`Synced with Google Drive${G.account()?.email ? " · " + G.account().email : ""}`); }
   catch (e) { toast(e.message, 4500); }
 }
@@ -227,6 +229,7 @@ document.addEventListener("click", (e) => { if (e.target.closest("#themeBtn")) {
 applyTheme();
 
 // ---------- boot ----------
+const fromGoogle = G.consumeRedirect();   // came back from Google's sign-in page (installed app)
 (async function boot() {
   if (!(await store.claimTab())) { await store.load().catch(() => {}); showBlocked(); return; }
   await store.load();
@@ -254,6 +257,11 @@ applyTheme();
     }
   });
   await route(true);
+  if (fromGoogle) {
+    if (!fromGoogle.ok) toast(fromGoogle.error, 5000);
+    else { try { await sync.afterRedirect(fromGoogle.intent); if (sync.syncState().status === "ok") toast(`Synced with Google Drive${G.account()?.email ? " · " + G.account().email : ""}`); } catch (e) { toast(e.message, 4500); }
+      if (location.hash === "#/settings" && !store._editorDirty) ctx.refresh(); }
+  }
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").then((reg) => {
       reg.addEventListener("updatefound", () => {

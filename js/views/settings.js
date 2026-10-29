@@ -59,6 +59,8 @@ export default function settingsView(ctx) {
         <label class="field" style="margin-top:8px"><span>Google OAuth Client ID (one-time setup – see README)</span>
           <input type="text" id="cid" value="${G.clientId()}" placeholder="xxxxx.apps.googleusercontent.com" ${window.APP_CONFIG.googleClientId ? "readonly" : ""}></label>
         ${window.APP_CONFIG.googleClientId ? html`<p class="tiny muted" style="margin:4px 0 0">Set in js/config.js for every device – nothing to do here.</p>` : ""}
+        <p class="small" style="margin:10px 0 4px"><b>Installed app sign-in</b> – in the installed app, Google sign-in opens in this window (no pop-up). One-time step: in Google Cloud → Clients → your client, add this under <b>Authorized redirect URIs</b>:</p>
+        <div class="row" style="gap:6px"><input type="text" readonly value="${G.redirectUri()}" id="ruri" data-nodirty><button type="button" class="btn small ghost" id="copyUri">Copy</button></div>
       </details></div>
 
     ${G.wasConnected() || G.hasToken() ? html`<div class="card"><h2>${icon("download")} Backups in Drive</h2>
@@ -101,6 +103,7 @@ export default function settingsView(ctx) {
 
     <div class="card"><div class="card-head"><h2>Meal plan types</h2><button class="btn small teal" id="newType">${icon("plus")} Create new plan type</button></div>
       <p class="small muted">Tap a type to edit its sections. “Daily” = different each day, “Same” = one row for all days. Section names, icons and colours are shared by all types.</p>
+      <p class="small muted"><b>Default timings:</b> the time next to each section is the default used for a <b>new client's first plan</b>. After that, each client keeps their own timings (changing a time in their plan updates them).</p>
       ${Object.entries(st.mealPatterns).map(([pk, p]) => { const builtIn = pk in DEFAULT_SETTINGS.mealPatterns; const used = store.data.plans.filter((x) => x.pattern === pk).length;
         return html`<details class="ptype" data-pk="${pk}" ${openType === pk ? "open" : ""}>
         <summary><span class="grow"><b>${p.label}</b> <span class="small muted">· ${p.slots.length} sections · ${used} plan${used === 1 ? "" : "s"}</span></span>${builtIn ? html`<span class="badge">Built-in</span>` : ""}</summary>
@@ -152,6 +155,7 @@ export default function settingsView(ctx) {
       <span class="field-label" style="margin-top:14px">Serving guide</span>
       <div class="rows">${rowsList("defaults.servingSizes", st.defaults.servingSizes, [{ f: "value", ph: "5 g", w: "110px" }, { f: "label", ph: "1 Teaspoon", w: "1fr" }])}</div>
       <div class="grid two" style="margin-top:14px">${st.defaults.guidelines.map((g, i) => html`<label class="field"><span>${g.title} (one per line)</span><textarea rows="6" data-gl="${i}">${g.items.join("\n")}</textarea></label>`)}</div>
+      <label class="field" style="margin-top:14px"><span>Allowed food – default for new plans (one per line, e.g. vegetables and fruits)</span><textarea rows="6" id="defAllowed" placeholder="Lauki, Tinda, Palak&#10;Apple, Papaya, Guava">${(st.defaults.allowedFood || []).join("\n")}</textarea></label>
       <label class="field" style="margin-top:12px"><span>Default water intake</span><input type="text" data-path="defaults.water" value="${st.defaults.water}"></label>
     </div>
 
@@ -236,6 +240,7 @@ export default function settingsView(ctx) {
       if (!isFinite(n) || n <= lo || n >= hi) { t.value = st.bmiBands[i].max; return toast(`Enter a value between ${lo} and ${hi}`); }
       st.bmiBands[i].max = n; return save("BMI ranges saved");
     }
+    if (t.id === "defAllowed") { st.defaults.allowedFood = t.value.split("\n").map((x) => x.trim()).filter(Boolean); return save("Saved"); }
     if (t.dataset.gl) { st.defaults.guidelines[+t.dataset.gl].items = t.value.split("\n").map((x) => x.trim()).filter(Boolean); return save("Saved"); }
     if (t.dataset.list) { getPath(t.dataset.list)[+t.dataset.i][t.dataset.f] = t.value.trim(); return save("Saved"); }
     if (t.id === "wm") { st.branding.watermarkOpacity = +t.value / 100; return save("Saved"); }
@@ -272,7 +277,9 @@ export default function settingsView(ctx) {
       if (!(await confirmBox("Disconnect Google?", "Syncing stops and the app's permission is removed from this Google account. Your data stays on this device and in Drive; connect again any time.", "Disconnect", false))) return;
       sync.disconnect(); toast("Disconnected from Google"); return render(); }
     if (b.dataset.theme) { applyTheme(b.dataset.theme); return render(); }
+    if (b.id === "copyUri") { try { await navigator.clipboard.writeText(G.redirectUri()); toast("Copied"); } catch { v.querySelector("#ruri").select(); toast("Select and copy the address"); } return; }
     if (b.id === "switchAcc") {
+      if (G.useRedirect() && store._editorDirty) return toast("Save what you're editing first", 3500);
       try { await sync.switchAccount(); if (sync.syncState().status === "ok") toast(`Connected as ${G.account()?.email || "new account"}`); }
       catch (e) { toast(e.message, 4500); }
       st = store.settings; return render();

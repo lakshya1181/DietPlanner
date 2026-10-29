@@ -1,5 +1,5 @@
 // Offline support: app files are cached; data stays in IndexedDB / Google Drive.
-const CACHE = "nutriwise-v1.9.5";
+const CACHE = "nutriwise-v1.9.6";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/config.js", "js/defaults.js", "js/render.js", "js/app.js", "js/store.js", "js/ui.js", "js/model.js",

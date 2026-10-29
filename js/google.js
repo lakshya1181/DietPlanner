@@ -1,5 +1,5 @@
-// Google sign-in (Google Identity Services token flow) + Drive and Calendar REST calls.
-// Browser-only: no server, no client secret. Tokens live in memory (about 1 hour).
+// Google sign-in (Google Identity Services token flow in a browser tab; full-page redirect in the installed app)
+// + Drive and Calendar REST calls. Browser-only: no server, no client secret. A sign-in lasts about 1 hour.
 import { local } from "./store.js";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"; // only files this app creates
@@ -25,9 +25,49 @@ function loadGis() {
   });
 }
 
+// ---------- sign-in without a pop-up (installed app) ----------
+// In an installed app (Windows/Android/iPhone home screen) Google's pop-up window often can't hand the answer back,
+// so it hangs on "Continue". There the app window itself goes to Google and comes back with the sign-in.
+// One-time setup: the app's address must be listed under "Authorized redirect URIs" of the OAuth client.
+export const isInstalledApp = () => matchMedia("(display-mode: standalone)").matches || matchMedia("(display-mode: window-controls-overlay)").matches || navigator.standalone === true;
+export const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, "");
+export const useRedirect = () => isInstalledApp() || local.get("forceRedirectSignIn", false);
+function redirectSignIn({ prompt, hint, intent }) {
+  const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  local.set("gRedirect", { state, intent: intent || "connect", back: location.hash || "#/", at: Date.now() });
+  const p = new URLSearchParams({ client_id: clientId(), redirect_uri: redirectUri(), response_type: "token", scope: scopes(), include_granted_scopes: "true", state });
+  if (prompt) p.set("prompt", prompt);
+  if (hint) p.set("login_hint", hint);
+  location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
+  return new Promise(() => {});   // the page leaves; it continues in consumeRedirect() when Google sends it back
+}
+// Called at start-up, before the router: picks the sign-in out of the address Google came back with.
+// Returns null (nothing to do) or { ok, intent, error }.
+export function consumeRedirect() {
+  const h = location.hash || "";
+  if (!/[#&](access_token|error)=/.test(h)) return null;
+  const q = new URLSearchParams(h.replace(/^#\/?/, "")), saved = local.get("gRedirect", null);
+  local.set("gRedirect", null);
+  const back = saved?.back && !/access_token|error=/.test(saved.back) ? saved.back : "#/settings";
+  history.replaceState(null, "", location.pathname + location.search + back);   // the token never stays in the address bar
+  if (!saved || q.get("state") !== saved.state) return { ok: false, error: "The Google sign-in answer didn't match this device. Please try again." };
+  if (q.get("error")) return { ok: false, intent: saved.intent, error: q.get("error") === "access_denied" ? "Sign-in cancelled." : "Google: " + q.get("error") };
+  const granted = String(q.get("scope") || "").split(/\s+/);
+  if (!granted.includes(DRIVE_SCOPE)) return { ok: false, intent: saved.intent, error: "Drive permission was not granted." };
+  token = q.get("access_token"); tokenExp = Date.now() + (+q.get("expires_in") || 3600) * 1000;
+  local.set("googleToken", { token, exp: tokenExp }); local.set("googleConnected", true);
+  local.set("calendarGranted", granted.includes(window.APP_CONFIG.calendarScope));
+  return { ok: true, intent: saved.intent };
+}
+
 // Must be called from a user gesture (tap) the first time, or the popup is blocked.
-export async function signIn({ prompt, hint } = {}) {
+export async function signIn({ prompt, hint, intent } = {}) {
   if (!isConfigured()) throw new Error("Google Client ID is not set. Add it in Settings → Google account.");
+  if (useRedirect()) {
+    const h = hint === undefined ? account()?.email : hint;
+    // no consent screen when permissions were already given; account picker only when switching
+    return redirectSignIn({ prompt: prompt ?? (wasConnected() ? "" : "consent"), hint: h, intent });
+  }
   await loadGis();
   if (!tokenClient) {
     tokenClient = google.accounts.oauth2.initTokenClient({

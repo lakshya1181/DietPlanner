@@ -72,6 +72,8 @@ Use **Diet Planner.html** (single file). Double-click it to open in Chrome or Ed
    - **Authorized JavaScript origins:** `https://YOUR-USERNAME.github.io`
      (no trailing slash and no `/dietplanner`).
    - Click **Create** and copy the **Client ID** (it ends in `.apps.googleusercontent.com`).
+   - **Authorized redirect URIs:** `https://YOUR-USERNAME.github.io/dietplanner/` (with the slash at the end).
+     The installed app signs in through this address instead of a pop-up window.
 6. Add the Client ID to the app, choosing one of these:
    - **Easiest:** open the app → **Settings → Google account** → paste it → **Connect Google**.
      This has to be done once on each device.

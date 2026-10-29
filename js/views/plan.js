@@ -55,7 +55,7 @@ async function pickRecipes(plan) {
 
 // ---------- plan templates ----------
 // A template is only the meal plan: type, days, meals with Daily/Same choices and timings.
-const TEMPLATE_KEYS = ["pattern", "patternSnapshot", "slotSnapshot", "days", "meals", "slotModes", "slotTimes"];
+const TEMPLATE_KEYS = ["pattern", "patternSnapshot", "slotSnapshot", "days", "meals", "slotModes"];   // no timings: each client keeps their own
 export function templateFromPlan(plan, name) {
   snapshotType(plan);
   const t = { name };
@@ -68,8 +68,10 @@ function applySource(plan, src, mealsOnly = false) {
   plan.pattern = src.pattern; plan.days = Math.min(7, Math.max(1, +src.days || 7));
   if (src.patternSnapshot) plan.patternSnapshot = structuredClone(src.patternSnapshot);
   if (src.slotSnapshot) plan.slotSnapshot = structuredClone(src.slotSnapshot);
-  plan.meals = structuredClone(src.meals || {}); plan.slotModes = structuredClone(src.slotModes || {}); plan.slotTimes = structuredClone(src.slotTimes || {});
+  // meals only – timings never come from another plan or a template (this client's own timings stay)
+  plan.meals = structuredClone(src.meals || {}); plan.slotModes = structuredClone(src.slotModes || {});
   if (mealsOnly) return;
+  plan.allowedFood = structuredClone(src.allowedFood || []);
   plan.exercise = structuredClone(src.exercise || []); plan.servingSizes = structuredClone(src.servingSizes || []);
   plan.guidelines = structuredClone(src.guidelines || []).map((g) => ({ type: "prefer", title: "", ...g, items: g.items || [] }));
   plan.recipeIds = [...(src.recipeIds || [])].filter((x) => store.recipe(x));
@@ -189,6 +191,7 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
   plan.pdfSections ||= { ...store.settings.pdfSections, ...(plan.callSummary && "includeInPdf" in plan.callSummary ? { callSummary: !!plan.callSummary.includeInPdf } : {}) };
   const otherPlans = () => store.data.plans.filter((p) => p.id !== plan.id);
   let patternChosen = false;
+  const timesChanged = new Set();   // meal times changed on this screen → become the client's own timings
   let dirty = !existing, mode = local.get("planView", matchMedia("(min-width: 900px)").matches ? "meal" : "day");
   store._editorDirty = dirty;
   const markDirty = () => { dirty = true; store._editorDirty = true; };
@@ -216,7 +219,7 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
       <div class="card slot-card" style="--accent:${sl.accent}">
         <div class="slot-head">
           <div class="slot-name">${slotIcon(sl)} ${sl.name}</div>
-          <input type="time" data-time="${sl.id}" value="${to24(sl.time)}" aria-label="${sl.name} time">
+          ${tpl ? "" : html`<input type="time" data-time="${sl.id}" value="${to24(sl.time)}" aria-label="${sl.name} time">`}
           <div class="seg" data-mode="${sl.id}"><button type="button" data-v="daily" class="${sl.mode === "daily" ? "on" : ""}">Daily</button><button type="button" data-v="shared" class="${sl.mode === "shared" ? "on" : ""}">Same all days</button></div>
         </div>
         ${sl.mode === "shared" ? ta(`shared:${sl.id}`, m.shared, "Same for every day…")
@@ -229,12 +232,12 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
     const byDay = html`
       ${shared.length ? html`<div class="card"><h2>Same every day</h2><div class="stack">${shared.map((sl) => html`
         <div class="slot-line" style="--accent:${sl.accent}"><div class="row between"><span class="lbl">${sl.name}</span>
-          <span class="row" style="gap:6px"><input type="time" data-time="${sl.id}" value="${to24(sl.time)}" style="width:136px;min-height:34px;padding:4px 8px">
+          <span class="row" style="gap:6px">${tpl ? "" : html`<input type="time" data-time="${sl.id}" value="${to24(sl.time)}" style="width:136px;min-height:34px;padding:4px 8px">`}
           <button type="button" class="btn small ghost" data-flip="${sl.id}" title="Make it different each day">Daily</button></span></div>
           ${ta(`shared:${sl.id}`, meal(sl.id).shared, "Same for every day…")}</div>`)}</div></div>` : ""}
       ${ds.map((d, i) => html`<div class="card day-card">
         <div class="day-title"><h2>${tpl ? `Day ${i + 1}` : html`${wd(d)} <span class="muted small">${fmtDate(d)}</span>`}</h2></div>
-        ${daily.map((sl) => html`<div class="slot-line" style="--accent:${sl.accent}"><div class="row between"><span class="lbl">${sl.name} <span class="muted tiny">${sl.time}</span></span>
+        ${daily.map((sl) => html`<div class="slot-line" style="--accent:${sl.accent}"><div class="row between"><span class="lbl">${sl.name} ${tpl ? "" : html`<span class="muted tiny">${sl.time}</span>`}</span>
           ${i === 0 ? html`<button type="button" class="btn small ghost" data-flip="${sl.id}" title="Use one meal for all days">Same all days</button>` : ""}</div>
           ${ta(`day:${sl.id}:${i}`, meal(sl.id).days[i], "")}</div>`)}
       </div>`)}`;
@@ -293,6 +296,10 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
       <div class="card"><h3 style="color:${g.type === "avoid" ? "var(--coral)" : "var(--green)"};margin-bottom:8px">${g.title}</h3>
         <textarea data-bind="gl:${i}" rows="6" placeholder="One item per line">${g.items.join("\n")}</textarea></div>`)}</div>
 
+    <div class="section-title"><h2>Allowed food</h2>${pdfTick("allowedFood")}</div>
+    <div class="card"><textarea data-bind="allowed" rows="5" placeholder="One per line, e.g. Lauki, Tinda, Palak / Apple, Papaya, Guava">${(plan.allowedFood || []).join("\n")}</textarea>
+      ${(plan.allowedFood || []).length ? "" : html`<p class="tiny muted" style="margin:6px 0 0">Set a default list in Settings → Defaults so every new plan starts with it.</p>`}</div>
+
     <div class="section-title"><h2>Recipes</h2>${pdfTick("recipes")}<button type="button" class="btn small ghost" id="addRecipe">${icon("plus")} Add</button></div>
     <div class="card">${(plan.recipeIds || []).length ? html`<div class="chips">${plan.recipeIds.map((rid) => { const r = store.recipe(rid); return r ? html`
         <span class="chip on" style="cursor:default">${r.name} <button type="button" class="icon-btn" data-rmrecipe="${rid}" aria-label="Remove ${r.name}" style="width:24px;height:24px;margin:-4px -6px -4px 2px">${icon("x")}</button></span>` : ""; })}</div>
@@ -329,7 +336,7 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
   const v = ctx.view();
   v.oninput = (e) => {
     const t = e.target, b = t.dataset.bind;
-    if (t.dataset.time) { plan.slotTimes[t.dataset.time] = to12(t.value); markDirty(); return; }
+    if (t.dataset.time) { plan.slotTimes[t.dataset.time] = to12(t.value); timesChanged.add(t.dataset.time); markDirty(); return; }
     if (t.id === "week") { plan.weekNumber = +t.value || null; markDirty(); return; }
     if (t.id === "tplName") { plan.name = t.value; markDirty(); return; }
     if (!b) return;
@@ -341,6 +348,7 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
     else if (kind === "sv") plan.servingSizes[+a][c] = t.value;
     else if (kind === "gl") plan.guidelines[+a].items = t.value.split("\n").map((x) => x.trim()).filter(Boolean);
     else if (kind === "notes") plan.notes = t.value;
+    else if (kind === "allowed") plan.allowedFood = t.value.split("\n").map((x) => x.trim()).filter(Boolean);
     else if (kind === "cs") cs().text = t.value;
   };
   v.onchange = (e) => {
@@ -438,6 +446,11 @@ export default async function planEditor(ctx, planId, clientId, tplId) {
     // the client's plan type follows the type you chose here – but never a type that no longer exists in Settings,
     // and never just because a template/copied plan used another type
     if (store.settingsRO.mealPatterns[plan.pattern] && (patternChosen || !fresh.mealPattern)) fresh.mealPattern = plan.pattern;
+    // the client's timings: all of this plan's times the first time, afterwards only the times changed here
+    const planTimes = Object.fromEntries(planSlots(plan).map((x) => [x.id, x.time]));
+    if (!fresh.slotTimes) fresh.slotTimes = planTimes;
+    else for (const [id, t] of Object.entries(planTimes)) if (timesChanged.has(id) || !(id in fresh.slotTimes)) fresh.slotTimes[id] = t;
+    timesChanged.clear();
     await store.upsertClient(fresh);
     plan.exercise = plan.exercise.filter((x) => String(x.text || "").trim());
     plan.servingSizes = plan.servingSizes.filter((x) => String(x.value || "").trim() || String(x.label || "").trim());
