@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NutriWise Diet Planner</title>
+  <meta name="theme-color" content="#1E3A6B">
+  <meta name="description" content="Create diet plans, track client progress and export PDF / PNG.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Diet Planner">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="assets/icons/icon-192.png" alt=""><div><b id="brandName">NutriWise</b><small>Diet Planner</small></div></div>
+      <nav id="nav"></nav>
+      <div class="side-foot" id="sideFoot"></div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button class="icon-btn back" id="backBtn" aria-label="Back" hidden>
+          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h1 id="pageTitle">Today</h1>
+        <div class="top-actions" id="topActions"></div>
+      </header>
+      <div id="updateBanner"></div>
+      <div id="banner"></div>
+      <section id="view" class="view"></section>
+    </main>
+    <nav class="tabbar" id="tabbar"></nav>
+  </div>
+  <div id="modalRoot"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    // Very old browsers (e.g. iPhone below iOS 15.4) can't run this app: say so instead of a blank screen.
+    if (typeof structuredClone !== "function" || !Array.prototype.at || !window.indexedDB) {
+      document.addEventListener("DOMContentLoaded", function () {
+        document.body.innerHTML = '<div style="font-family:system-ui;padding:32px;max-width:520px;margin:auto"><h2>Please update your browser</h2><p>This app needs a newer browser. On iPhone/iPad update to iOS 15.4 or later; on other devices use the latest Chrome, Edge or Safari.</p></div>';
+      });
+    }
+  </script>
+  <script src="js/config.js"></script>
+  <script src="vendor/pdfmake.min.js" defer></script>
+  <script src="vendor/pdf.min.js" defer></script>
+  <script src="js/render.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
