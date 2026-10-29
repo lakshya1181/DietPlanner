@@ -13,6 +13,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Diet Planner">
   <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Light / dark before anything is drawn (no white flash). Choice is per device: Settings → Appearance or the top-bar button.
+    (function () { var p = "light"; try { p = JSON.parse(localStorage.getItem("nw-theme")) || "light"; } catch (e) {}
+      var dark = p === "dark" || (p === "auto" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.setAttribute("data-theme", dark ? "dark" : "light"); })();
+  </script>
 </head>
 <body>
   <div id="app">
@@ -27,6 +33,7 @@
           <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
         <h1 id="pageTitle">Today</h1>
         <div class="top-actions" id="topActions"></div>
+        <button class="icon-btn theme-btn" id="themeBtn" aria-label="Dark / light mode" title="Dark / light mode"></button>
       </header>
       <div id="updateBanner"></div>
       <div id="banner"></div>

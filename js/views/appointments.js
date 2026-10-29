@@ -35,7 +35,7 @@ export async function appointmentModal(a) {
   });
   if (!r) return null;
   if (r === "delete") {
-    if (!(await confirmBox("Delete appointment?", "The calendar reminder is removed too."))) return null;
+    if (!(await confirmBox("Delete appointment?", "The calendar reminder is removed too. It goes to the Recycle bin (Settings) for 30 days."))) return null;
     try { await removeReminder(a.eventId); } catch {}
     await store.deleteAppointment(a.id); toast("Appointment deleted"); return null;
   }

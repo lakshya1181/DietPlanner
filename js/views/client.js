@@ -104,7 +104,10 @@ export default function clientView(ctx, id) {
         <tr><th>Date</th>${sites.map((x) => html`<th>${x.label}</th>`)}<th></th></tr>
         ${mlog.map((r) => html`<tr><td>${fmtDate(r.date)}</td>${sites.map((x) => html`<td>${r[x.key] ?? "–"}</td>`)}
           <td><button class="icon-btn danger" data-delm="${r.date}" aria-label="Delete">${icon("trash")}</button></td></tr>`)}
-      </table></div>` : html`<div class="empty small">No measurements yet.</div>`}
+      </table></div>
+      <div class="m-cards">${mlog.map((r) => html`<div class="m-card"><div class="row between"><b>${fmtDate(r.date, { year: true })}</b>
+          <button class="icon-btn danger" data-delm="${r.date}" aria-label="Delete">${icon("trash")}</button></div>
+        <div class="m-grid">${sites.map((x) => html`<div><span class="tiny muted">${x.label}</span><b>${r[x.key] ?? "–"}</b></div>`)}</div></div>`)}</div>` : html`<div class="empty small">No measurements yet.</div>`}
     </div>
 
     <div class="card" style="border:1.5px dashed var(--line);box-shadow:none">
@@ -169,7 +172,8 @@ export default function clientView(ctx, id) {
     if (t.id === "addM") return measureModal();
     if (t.id === "addN") return noteModal(null);
     if (t.dataset.editn) return noteModal(c.privateNotes.find((n) => n.id === t.dataset.editn));
-    if (t.dataset.deln && (await confirmBox("Delete note?", "This note will be removed."))) {
+    if (t.dataset.deln && (await confirmBox("Delete note?", "This note will be removed. It goes to the Recycle bin (Settings) for 30 days."))) {
+      const n0 = c.privateNotes.find((n) => n.id === t.dataset.deln); if (n0) store.toTrash("note", n0, { clientId: c.id, clientName: c.name });
       c.privateNotes = c.privateNotes.filter((n) => n.id !== t.dataset.deln); await store.upsertClient(c); return draw(); }
     if (t.id === "addAppt") { await appointmentModal({ clientId: id }); return draw(); }
     if (t.dataset.edita) { await appointmentModal(store.data.appointments.find((a) => a.id === t.dataset.edita)); return draw(); }
@@ -180,7 +184,7 @@ export default function clientView(ctx, id) {
       c.measurementLog = c.measurementLog.filter((w) => w.date !== t.dataset.delm); await store.upsertClient(c); draw(); }
     if (t.dataset.delp) {
       const p = store.plan(t.dataset.delp);
-      if (await confirmBox("Delete plan?", "This plan and its reminder will be removed.")) {
+      if (await confirmBox("Delete plan?", "This plan and its reminder will be removed. It goes to the Recycle bin (Settings) for 30 days.")) {
         try { await removeReminder(p.reminderEventId); } catch {}
         await store.deletePlan(p.id); toast("Plan deleted"); draw(); }
     }

@@ -46,7 +46,7 @@ export const normText = (s) => String(s || "").toLowerCase().replace(/\s+/g, " "
 
 function emptyDb() {
   return { schema: SCHEMA, rev: 0, updatedAt: null, settings: {}, clients: [], plans: [], library: [], appointments: [], recipes: [], pendingEventDeletes: [],
-    meta: { baseRev: 0, dirty: false, changeSeq: 0, deviceId: uid("dev-") } };
+    trash: [], templates: [], meta: { baseRev: 0, dirty: false, changeSeq: 0, deviceId: uid("dev-") } };
 }
 
 // Check a backup / Drive copy before it is used. Throws if the file isn't usable; repairs small problems
@@ -54,7 +54,7 @@ function emptyDb() {
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 export function cleanDb(obj) {
   if (!isObj(obj)) throw new Error("Not a Diet Planner backup file");
-  const lists = ["clients", "plans", "library", "appointments", "recipes", "pendingEventDeletes"];
+  const lists = ["clients", "plans", "library", "appointments", "recipes", "pendingEventDeletes", "trash", "templates"];
   for (const k of lists) if (obj[k] != null && !Array.isArray(obj[k])) throw new Error(`"${k}" in the file is not a list`);
   if (!Array.isArray(obj.clients)) throw new Error("Not a Diet Planner backup file");
   if (obj.settings != null && !isObj(obj.settings)) throw new Error("Settings in the file are damaged");
@@ -70,6 +70,10 @@ export function cleanDb(obj) {
   d.appointments = arr(d.appointments).filter((a) => isObj(a) && a.id && ISO.test(a.date));
   d.recipes = arr(d.recipes).filter((r) => isObj(r) && r.id);
   d.pendingEventDeletes = arr(d.pendingEventDeletes).filter((x) => typeof x === "string");
+  d.receiptSeq = Math.max(0, Math.floor(+d.receiptSeq) || 0); d.invoiceSeq = Math.max(0, Math.floor(+d.invoiceSeq) || 0);
+  d.templates = arr(d.templates).filter((t) => isObj(t) && t.id && String(t.name || "").trim()).map((t) => ({ ...t, days: Math.min(7, Math.max(1, Math.round(+t.days) || 7)), meals: isObj(t.meals) ? t.meals : {} }));
+  d.clients.forEach((c) => { c.packages = arr(c.packages).filter((k) => isObj(k) && k.id); c.payments = arr(c.payments).filter((x) => isObj(x) && x.id && ISO.test(x.date) && +x.amount > 0); });
+  d.trash = arr(d.trash).filter((t) => isObj(t) && t.id && isObj(t.item) && t.deletedAt);
   return d;
 }
 
@@ -93,7 +97,16 @@ export const store = {
   // Bring older data up to date (safe to run repeatedly).
   migrate() {
     const d = this.data;
-    d.clients ||= []; d.plans ||= []; d.library ||= []; d.appointments ||= []; d.pendingEventDeletes ||= []; d.recipes ||= [];
+    d.clients ||= []; d.plans ||= []; d.library ||= []; d.appointments ||= []; d.pendingEventDeletes ||= []; d.recipes ||= []; d.trash ||= []; d.templates ||= [];
+    this.purgeTrash();
+    // records from old or hand-edited files may miss lists: fill them so no screen breaks
+    const A = (v) => (Array.isArray(v) ? v : []), O = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+    for (const c of d.clients) {
+      c.healthFlags = A(c.healthFlags).filter((x) => typeof x === "string"); c.healthLevels = O(c.healthLevels);
+      c.weightLog = A(c.weightLog); c.measurementLog = A(c.measurementLog); c.privateNotes = A(c.privateNotes);
+      c.packages = A(c.packages); c.payments = A(c.payments); c.invoices = A(c.invoices);
+      if (typeof c.name !== "string") c.name = String(c.name ?? "");
+    }
     // Client IDs (C-0001…) in order of creation for clients that don't have one yet
     let max = Math.max(0, ...d.clients.map((c) => parseInt(String(c.code || "").replace(/\D/g, ""), 10) || 0));
     [...d.clients].sort((a, b) => String(a.updatedAt || "").localeCompare(String(b.updatedAt || "")))
@@ -162,7 +175,10 @@ export const store = {
   // so a broken backup (or Drive file) can never wipe what is on the device.
   async replaceAll(obj, { fromSync = false, baseRev } = {}) {
     const meta = this.data.meta;
-    const next = { ...emptyDb(), ...cleanDb(obj), meta: { ...meta, dirty: !fromSync, baseRev: baseRev ?? meta.baseRev } };
+    const cleaned = cleanDb(obj);
+    cleaned.receiptSeq = Math.max(cleaned.receiptSeq || 0, Math.floor(+this.data.receiptSeq) || 0);
+    cleaned.invoiceSeq = Math.max(cleaned.invoiceSeq || 0, Math.floor(+this.data.invoiceSeq) || 0);   // numbers already handed out are never reused
+    const next = { ...emptyDb(), ...cleaned, meta: { ...meta, dirty: !fromSync, baseRev: baseRev ?? meta.baseRev } };
     const prev = this.data;
     try { this.data = next; this._settingsCache = null; this.migrate(); this.settingsRO; }
     catch (e) { this.data = prev; this._settingsCache = null; throw new Error("The file has data this app can't read (" + e.message + ")"); }
@@ -180,7 +196,59 @@ export const store = {
     if (i >= 0) this.data.clients[i] = c; else this.data.clients.push(c);
     return this.commit("client").then(() => c);
   },
+  // ---- recycle bin: deleted things are kept for 30 days and can be restored ----
+  toTrash(kind, item, extra = {}) {
+    this.data.trash ||= [];
+    this.data.trash.unshift({ id: uid("t-"), kind, item: structuredClone(item), ...structuredClone(extra), deletedAt: new Date().toISOString() });
+  },
+  purgeTrash() {   // older than 30 days → gone for good
+    const cut = Date.now() - 30 * 86400000;
+    this.data.trash = (this.data.trash || []).filter((t) => Date.parse(t.deletedAt) > cut);
+  },
+  restoreFromTrash(tid) {
+    const t = (this.data.trash || []).find((x) => x.id === tid);
+    if (!t) throw new Error("Not in the recycle bin any more");
+    const d = this.data, has = (list, id) => list.some((x) => x.id === id);
+    let note = "";
+    if (t.kind === "client") {
+      const c = t.item;
+      if (d.clients.some((x) => normText(x.code) === normText(c.code))) { const old = c.code; c.code = this.nextClientCode(); note = `Client ID ${old} is used by someone else now, so it got ${c.code}.`; }
+      if (!has(d.clients, c.id)) d.clients.push(c);
+      for (const p of t.plans || []) if (!has(d.plans, p.id)) d.plans.push(p);
+      for (const a of t.appointments || []) if (!has(d.appointments, a.id)) d.appointments.push(a);
+    } else if (t.kind === "plan") {
+      if (!has(d.clients, t.item.clientId)) throw new Error("Restore the client first – this plan's client is deleted too.");
+      if (!has(d.plans, t.item.id)) d.plans.push(t.item);
+    } else if (t.kind === "recipe") {
+      if (!has(d.recipes, t.item.id)) d.recipes.push(t.item);
+      for (const pid of t.planIds || []) { const p = d.plans.find((x) => x.id === pid); if (p) p.recipeIds = [...new Set([...(p.recipeIds || []), t.item.id])]; }
+    } else if (t.kind === "meal") {
+      if (!d.library.some((m) => normText(m.text) === normText(t.item.text))) d.library.push(t.item);
+    } else if (t.kind === "note") {
+      const c = d.clients.find((x) => x.id === t.clientId);
+      if (!c) throw new Error("Restore the client first.");
+      c.privateNotes ||= []; if (!has(c.privateNotes, t.item.id)) c.privateNotes.push(t.item);
+    } else if (t.kind === "template") {
+      d.templates ||= [];
+      if (d.templates.some((x) => normText(x.name) === normText(t.item.name))) { t.item.name += " (restored)"; note = `A template with that name exists, so it was restored as “${t.item.name}”.`; }
+      if (!has(d.templates, t.item.id)) d.templates.push(t.item);
+    } else if (t.kind === "payment" || t.kind === "package") {
+      const c = d.clients.find((x) => x.id === t.clientId);
+      if (!c) throw new Error("Restore the client first.");
+      const key = t.kind === "payment" ? "payments" : "packages"; c[key] ||= []; if (!has(c[key], t.item.id)) c[key].push(t.item);
+    } else if (t.kind === "appointment") {
+      if (!has(d.clients, t.item.clientId)) throw new Error("Restore the client first.");
+      if (!has(d.appointments, t.item.id)) d.appointments.push(t.item);
+    }
+    d.trash = d.trash.filter((x) => x.id !== tid);
+    return this.commit("trash").then(() => note);
+  },
+  deleteForever(tid) { this.data.trash = (this.data.trash || []).filter((x) => x.id !== tid); return this.commit("trash"); },
+  emptyTrash() { this.data.trash = []; return this.commit("trash"); },
+
   deleteClient(id) {
+    const c = this.client(id);
+    if (c) this.toTrash("client", c, { plans: this.data.plans.filter((p) => p.clientId === id), appointments: this.data.appointments.filter((a) => a.clientId === id) });
     this.data.clients = this.data.clients.filter((c) => c.id !== id);
     this.data.plans = this.data.plans.filter((p) => p.clientId !== id);
     this.data.appointments = this.data.appointments.filter((a) => a.clientId !== id);
@@ -198,7 +266,7 @@ export const store = {
     if (i >= 0) this.data.plans[i] = copy; else this.data.plans.push(copy);
     return this.commit("plan").then(() => structuredClone(copy));
   },
-  deletePlan(id) { this.data.plans = this.data.plans.filter((p) => p.id !== id); return this.commit("plan"); },
+  deletePlan(id) { const p = this.plan(id); if (p) this.toTrash("plan", p); this.data.plans = this.data.plans.filter((p) => p.id !== id); return this.commit("plan"); },
 
   // ---- meal library (one list for every slot) ----
   learnMeals(texts) {
@@ -236,7 +304,35 @@ export const store = {
     if (i >= 0) this.data.library[i] = m; else this.data.library.push(m);
     return this.commit("library");
   },
-  deleteMeal(id) { this.data.library = this.data.library.filter((m) => m.id !== id); return this.commit("library"); },
+  deleteMeal(id) { const m = this.data.library.find((x) => x.id === id); if (m) this.toTrash("meal", m); this.data.library = this.data.library.filter((m) => m.id !== id); return this.commit("library"); },
+
+  // ---- plan templates (a plan without client, dates, notes or call summary) ----
+  template(id) { return (this.data.templates || []).find((t) => t.id === id); },
+  upsertTemplate(t) {
+    this.data.templates ||= [];
+    if (!t.id) { t.id = uid("tp-"); t.createdAt = new Date().toISOString(); }
+    t.updatedAt = new Date().toISOString();
+    const copy = structuredClone(t), i = this.data.templates.findIndex((x) => x.id === t.id);
+    if (i >= 0) this.data.templates[i] = copy; else this.data.templates.push(copy);
+    return this.commit("template").then(() => structuredClone(copy));
+  },
+  deleteTemplate(id) { const t = this.template(id); if (t) this.toTrash("template", t); this.data.templates = this.data.templates.filter((x) => x.id !== id); return this.commit("template"); },
+
+  // ---- payments (stored on the client: packages = what was sold, payments = money received) ----
+  // Never repeats: one more than the highest number ever used (counter, every client's payments and the Recycle bin).
+  nextReceiptNo() {
+    const num = (x) => +(/^R-(\d+)$/.exec(String(x || ""))?.[1] || 0);
+    const seen = [...this.data.clients.flatMap((c) => c.payments || []), ...(this.data.trash || []).flatMap((t) => (t.kind === "payment" ? [t.item] : t.kind === "client" ? t.item.payments || [] : []))].map((p) => num(p.receiptNo));
+    const n = Math.max(Math.floor(+this.data.receiptSeq) || 0, 0, ...seen) + 1;
+    this.data.receiptSeq = n; return `R-${String(n).padStart(4, "0")}`;
+  },
+
+  nextInvoiceNo() {
+    const num = (x) => +(/^INV-(\d+)$/.exec(String(x || ""))?.[1] || 0);
+    const seen = this.data.clients.flatMap((c) => c.invoices || []).map((v) => num(v.no));
+    const n = Math.max(Math.floor(+this.data.invoiceSeq) || 0, 0, ...seen) + 1;
+    this.data.invoiceSeq = n; return `INV-${String(n).padStart(4, "0")}`;
+  },
 
   // ---- recipes ----
   recipe(id) { return this.data.recipes.find((r) => r.id === id); },
@@ -248,6 +344,8 @@ export const store = {
     return this.commit("recipe").then(() => structuredClone(copy));
   },
   deleteRecipe(id) {
+    const r = this.recipe(id);
+    if (r) this.toTrash("recipe", r, { planIds: this.data.plans.filter((p) => (p.recipeIds || []).includes(id)).map((p) => p.id) });
     this.data.recipes = this.data.recipes.filter((r) => r.id !== id);
     for (const p of this.data.plans) if (p.recipeIds) p.recipeIds = p.recipeIds.filter((x) => x !== id);
     return this.commit("recipe");
@@ -260,7 +358,7 @@ export const store = {
     if (i >= 0) this.data.appointments[i] = a; else this.data.appointments.push(a);
     return this.commit("appointment").then(() => a);
   },
-  deleteAppointment(id) { this.data.appointments = this.data.appointments.filter((a) => a.id !== id); return this.commit("appointment"); },
+  deleteAppointment(id) { const a = this.data.appointments.find((x) => x.id === id); if (a) this.toTrash("appointment", a); this.data.appointments = this.data.appointments.filter((a) => a.id !== id); return this.commit("appointment"); },
 };
 
 // Device-only preferences (never synced): Google client id, connection flag, last view mode.

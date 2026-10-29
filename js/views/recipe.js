@@ -94,7 +94,7 @@ export default function recipeEditor(ctx, id) {
     const g = b.closest("[data-seg]"); if (g) { g.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); r[g.dataset.seg] = b.dataset.v; mark(); return; }
     if (b.id === "noPhoto") { read(); r.photo = null; mark(); return render(); }
     if (b.id === "del") {
-      if (!(await confirmBox("Delete recipe?", `“${r.name}” will be removed from the recipe list and from any plan it was added to.`))) return;
+      if (!(await confirmBox("Delete recipe?", `“${r.name}” will be removed from the recipe list and from any plan it was added to. It goes to the Recycle bin (Settings) for 30 days.`))) return;
       await store.deleteRecipe(r.id); dirty = false; toast("Recipe deleted"); return ctx.goReplace("#/recipes");
     }
     if (b.id === "save" || b.id === "savePdf") {

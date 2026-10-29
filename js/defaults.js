@@ -307,8 +307,14 @@ export const DEFAULT_SETTINGS = {
       "label": "Severe"
     }
   ],
+  "receipt": {
+    "details": "",
+    "note": "Thank you for choosing us for your health journey."
+  },
+  "paymentModes": ["UPI", "Cash", "Bank transfer", "Card"],
   "pdfSections": {
     "program": true,
+    "clientId": true,
     "recipes": true,
     "statTiles": true,
     "weightProgress": true,
@@ -327,6 +333,7 @@ export const DEFAULT_SETTINGS = {
 // Names shown for the PDF section switches (Settings and plan editor).
 export const PDF_SECTIONS = [
   ["program", "Cover: program dates & day number"],
+  ["clientId", "Cover: Client ID"],
   ["statTiles", "Cover: age, height, blood group, BMI tiles"],
   ["weightProgress", "Cover: weight progress & chart"],
   ["measurements", "Cover: body measurements"],

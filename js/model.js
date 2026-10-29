@@ -86,3 +86,34 @@ export function renderSettingsFor(plan) {
   for (const x of pat.slots) s.slotCatalog[x.id] ||= DietRender.slotInfo(x.id, plan, s);
   return s;
 }
+
+// ---------- payments ----------
+// client.packages = [{ id, name, fee, start, note, at }], client.payments = [{ id, date, amount, mode, note, packageId, packageName, receiptNo, at }]
+// One rule everywhere: money received pays the packages oldest first (by start date, then when added). So the package
+// rows, the totals and the Due list always agree, and anything paid beyond all fees shows as "advance".
+const pkgOrder = (a, b) => String(a.start || "").localeCompare(String(b.start || "")) || String(a.at || a.id).localeCompare(String(b.at || b.id));
+const payOrder = (a, b) => a.date.localeCompare(b.date) || String(a.at || "").localeCompare(String(b.at || ""));
+export function paymentSummary(c) {
+  const oldest = [...(c.packages || [])].sort(pkgOrder);
+  const payments = [...(c.payments || [])].sort((a, b) => -payOrder(a, b));   // newest first for lists
+  const fee = oldest.reduce((n, k) => n + (+k.fee || 0), 0), paid = payments.reduce((n, p) => n + (+p.amount || 0), 0);
+  let left = paid;
+  const alloc = oldest.map((k) => { const f = +k.fee || 0, pd = Math.min(f, left); left -= pd; return { ...k, paid: pd, due: f - pd }; });
+  return { packages: alloc.reverse(), oldest, payments, fee, paid, due: Math.max(0, fee - paid), extra: Math.max(0, paid - fee), last: payments[0] || null,
+    current: oldest.at(-1) || null };   // newest package: the default for a new payment
+}
+// What a receipt shows for one payment: totals as they stood right after it (packages added later don't change it).
+export function receiptFigures(c, p) {
+  const upTo = (x) => payOrder(x, p) <= 0;
+  const pkgs = (c.packages || []).filter((k) => !k.at || !p.at || k.at <= p.at || k.id === p.packageId);
+  const fee = pkgs.reduce((n, k) => n + (+k.fee || 0), 0);
+  const paidTotal = (c.payments || []).filter(upTo).reduce((n, x) => n + (+x.amount || 0), 0);
+  const pkg = (c.packages || []).find((k) => k.id === p.packageId);
+  const price = pkgs.reduce((n, k) => n + (+(k.price ?? k.fee) || 0), 0), discount = Math.max(0, price - fee);
+  const disc = pkgs.filter((k) => k.discount?.amount);
+  const main = (pkg?.discount?.amount ? pkg : null) || disc.at(-1) || null;   // the discount shown: this payment's package, else the latest one
+  const pct = disc.length === 1 && disc[0].discount.type === "pct" ? disc[0].discount.value : null;
+  const savedLine = main?.discount?.showSaved ? String(main.discount.savedLine || "").replace(/\{amount\}/g, "₹" + Math.round(discount).toLocaleString("en-IN")) : "";
+  return { packageName: pkg?.name || p.packageName || "", packageStart: pkg?.start || "", packageEnd: pkg?.end || "", fee, paidTotal, due: Math.max(0, fee - paidTotal), extra: Math.max(0, paidTotal - fee),
+    price, discount, discountPct: pct, discountReason: disc.map((k) => k.discount.reason).filter(Boolean).join(", "), savedLine };
+}

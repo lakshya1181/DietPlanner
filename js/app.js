@@ -1,6 +1,6 @@
 // App shell: router, navigation, sync banner, install button, service worker.
 import { store, local } from "./store.js";
-import { $, html, icon, modal, toast, closeAllModals, modalsDirty, confirmBox } from "./ui.js";
+import { $, html, icon, modal, toast, closeAllModals, modalsDirty, anyModalOpen, confirmBox } from "./ui.js";
 import * as sync from "./sync.js";
 import * as G from "./google.js";
 import dashboard from "./views/dashboard.js";
@@ -12,12 +12,13 @@ import library from "./views/library.js";
 import recipeEditor from "./views/recipe.js";
 import appointments from "./views/appointments.js";
 import settingsView from "./views/settings.js";
+import clientPayments from "./views/payments.js";
 
 const NAV = [
   { href: "#/", label: "Today", icon: "home", match: /^#\/?$/ },
-  { href: "#/clients", label: "Clients", icon: "users", match: /^#\/(clients|client|plan)/ },
+  { href: "#/clients", label: "Clients", icon: "users", match: /^#\/(clients|client|plan|payments)/ },
   { href: "#/appointments", label: "Calendar", icon: "calendar", match: /^#\/appointments/ },
-  { href: "#/library", label: "Meals", icon: "book", match: /^#\/(library|recipe)/ },
+  { href: "#/library", label: "Meals", icon: "book", match: /^#\/(library|recipe|template)/ },
   { href: "#/settings", label: "Settings", icon: "settings", match: /^#\/settings/ },
 ];
 const ROUTES = [
@@ -33,6 +34,10 @@ const ROUTES = [
   [/^#\/recipe\/new$/, (ctx) => recipeEditor(ctx, null)],
   [/^#\/recipe\/([^/]+)$/, recipeEditor],
   [/^#\/appointments$/, appointments],
+  [/^#\/payments\/([^/]+)$/, clientPayments],
+  [/^#\/templates$/, (ctx) => library(ctx, "templates")],
+  [/^#\/template\/new$/, (ctx) => planEditor(ctx, null, null, "new")],
+  [/^#\/template\/([^/]+)$/, (ctx, id) => planEditor(ctx, null, null, id)],
   [/^#\/settings$/, settingsView],
 ];
 
@@ -105,14 +110,14 @@ function renderBanner(s) {
   const label = { off: "Not connected", "needs-auth": "Tap to reconnect", syncing: "Syncing…", ok: "Saved to Drive", error: "Sync problem" }[s.status];
   foot.innerHTML = G.isConfigured() ? String(html`<button class="btn ghost small block" id="syncBtn">${icon("cloud")} ${label}</button>`) : "";
   foot.querySelector("#syncBtn")?.addEventListener("click", connectOrSync);
-  if (s.status === "needs-auth") b.innerHTML = String(html`<div class="banner info">${icon("cloud")}<span class="grow">Google Drive is paused on this device.</span><button class="btn teal small" id="reconnect">Reconnect</button></div>`);
+  if (s.status === "needs-auth") b.innerHTML = String(html`<div class="banner info">${icon("cloud")}<span class="grow">Google Drive is paused${G.account()?.email ? html` for <b>${G.account().email}</b>` : ""} — your work is saved on this device.</span><button class="btn teal small" id="reconnect">Reconnect</button></div>`);
   else if (s.status === "error") b.innerHTML = String(html`<div class="banner"><span class="grow">Drive sync: ${s.error}</span><button class="btn small" id="reconnect">Retry</button></div>`);
   else b.innerHTML = "";
   b.querySelector("#reconnect")?.addEventListener("click", connectOrSync);
 }
 export async function connectOrSync() {
-  try { if (!G.hasToken()) await sync.connect(); else await sync.syncNow(); if (sync.syncState().status === "ok") toast("Synced with Google Drive"); }
-  catch (e) { toast(e.message, 4000); }
+  try { if (!G.hasToken()) await sync.connect(); else await sync.syncNow(); if (sync.syncState().status === "ok") toast(`Synced with Google Drive${G.account()?.email ? " · " + G.account().email : ""}`); }
+  catch (e) { toast(e.message, 4500); }
 }
 
 sync.setConflictHandler((remote) => modal(String(html`
@@ -121,6 +126,27 @@ sync.setConflictHandler((remote) => modal(String(html`
   <p class="small muted">Drive copy saved: ${remote.updatedAt ? new Date(remote.updatedAt).toLocaleString() : "unknown"}<br>This device: ${store.data.updatedAt ? new Date(store.data.updatedAt).toLocaleString() : "unknown"}</p>
   <p class="small muted">Tip: download a backup from Settings first if unsure.</p>
   <div class="actions"><button class="btn ghost" data-close="drive">Keep Drive copy</button><button class="btn" data-close="device">Keep this device</button></div>`), { closeButton: false })); // must pick a version
+
+// Weekly backup question (after a sync). Yes → a dated copy in Drive/Backups.
+sync.setBackupAsker(() => anyModalOpen() ? Promise.resolve(null) : modal(String(html`<h2>Weekly backup</h2>
+  <p class="muted">Save this week's backup copy of all your data to Google Drive? It lets you go back if something is deleted or changed by mistake.</p>
+  <p class="small muted">The last 8 weekly copies are kept. You can also back up any time in Settings.</p>
+  <div class="actions"><button class="btn ghost" data-close="no">Not this week</button><button class="btn teal" data-close="yes">Yes, back up</button></div>`),
+  { closeButton: false, discardCheck: false, keepOnNavigate: true }).then((v) => { if (v === "yes") toast("Saving backup to Drive…"); return v == null ? null : v === "yes"; }));
+
+// Signed in with a different Gmail than the one this device's data belongs to: the user decides.
+sync.setAccountHandler((linked, email) => modal(String(html`
+  <h2>Different Google account</h2>
+  <p class="muted">The data on this device belongs to <b>${linked}</b>. You signed in as <b>${email}</b>. What should happen?</p>
+  ${store.data.meta.dirty ? html`<p class="small" style="color:var(--warn)">Some changes on this device haven't reached ${linked}'s Drive yet. Download a backup first if you choose the first option.</p>` : ""}
+  <div class="stack" style="margin-top:10px">
+    <button class="choice" data-close="theirs"><span><b>Use ${email}'s data</b><span class="small muted">This device shows ${email}'s clients (empty if that account has none yet). ${linked}'s data stays safe in its own Drive.</span></span></button>
+    <button class="choice" data-close="move"><span><b>Copy this device's data to ${email}</b><span class="small muted">The clients on this device are saved into ${email}'s Drive from now on.</span></span></button>
+  </div>
+  <div class="actions"><button class="btn ghost" id="bk" data-nodirty>${icon("download")} Download backup</button><button class="btn ghost" data-close="cancel">Cancel – stay with ${linked}</button></div>`),
+  { closeButton: false, discardCheck: false, onMount: (el) => { el.querySelector("#bk").onclick = () => {
+    const blob = new Blob([JSON.stringify(store.exportable())], { type: "application/json" }); const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `nutriwise-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); toast("Backup downloaded"); }; } }));
 
 // ---------- install ----------
 let installEvt = null;
@@ -148,7 +174,7 @@ function showBlocked(note) {
   $("#pageTitle").textContent = "Open in another window";
   $("#view").innerHTML = String(html`<div class="card" style="margin-top:20px"><h2>Diet Planner is open in another window</h2>
     <p class="muted">To keep your data safe, only one tab or window can be used at a time (two open copies would overwrite each other's changes).</p>
-    ${note ? html`<p class="small" style="color:#B4541B">${note}</p>` : ""}
+    ${note ? html`<p class="small" style="color:var(--warn)">${note}</p>` : ""}
     <button class="btn teal" id="useHere">Use it here</button></div>`);
   $("#useHere").onclick = () => { if (!chan) return location.reload(); $("#useHere").disabled = true; chan.postMessage({ type: "take" });
     setTimeout(() => { const b = $("#useHere"); if (b) b.disabled = false; }, 4000); };
@@ -175,10 +201,30 @@ chan?.addEventListener("message", (e) => {
 // A failed save: the change is kept in memory, the screen stays "unsaved", and this banner stays until a save works.
 function saveErrorBanner() {
   const e = store.saveError; if (!e) return;
-  $("#updateBanner").innerHTML = String(html`<div class="banner" style="background:#FDE9E5;color:#9E3524"><span class="grow"><b>Not saved on this device:</b> ${e.message || "storage error"}. Free some space on the phone/computer, then tap Save again. Your typing is kept on screen.</span><button class="btn small" id="dlBackup">Backup</button></div>`);
+  $("#updateBanner").innerHTML = String(html`<div class="banner" style="background:var(--coral-soft);color:var(--coral)"><span class="grow"><b>Not saved on this device:</b> ${e.message || "storage error"}. Free some space on the phone/computer, then tap Save again. Your typing is kept on screen.</span><button class="btn small" id="dlBackup">Backup</button></div>`);
   $("#dlBackup").onclick = () => { const blob = new Blob([JSON.stringify(store.exportable())], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `nutriwise-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); };
 }
 window.addEventListener("unhandledrejection", (e) => { if (e.reason && e.reason.saveFailed) { e.preventDefault(); saveErrorBanner(); } });
+
+// ---------- light / dark mode (per device) ----------
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const darkQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
+export const themePref = () => local.get("theme", "light");   // "light" | "dark" | "auto"
+export function applyTheme(pref = themePref()) {
+  local.set("theme", pref);
+  const dark = pref === "dark" || (pref === "auto" && !!darkQuery?.matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0E131A" : "#1E3A6B");
+  const b = $("#themeBtn"); if (b) { b.innerHTML = dark ? SUN : MOON; b.title = b.ariaLabel = dark ? "Switch to light mode" : "Switch to dark mode"; }
+}
+darkQuery?.addEventListener?.("change", () => { if (themePref() === "auto") applyTheme("auto"); });
+document.addEventListener("click", (e) => { if (e.target.closest("#themeBtn")) {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  applyTheme(dark ? "light" : "dark"); toast(dark ? "Light mode" : "Dark mode");
+  if (location.hash === "#/settings" && !store._editorDirty) ctx.refresh();
+} });
+applyTheme();
 
 // ---------- boot ----------
 (async function boot() {

@@ -113,6 +113,7 @@ export function modal(content, { onMount, closeButton = true, keepOnNavigate = f
 // Called when the page changes (e.g. phone Back button) so a dialog never stays over the wrong page.
 export function closeAllModals() { [...openModals].filter((m) => !m.keepOnNavigate).forEach((m) => m.close(null)); }
 // True if a pop-up with unsaved typing is open (the router asks before leaving the page).
+export const anyModalOpen = () => openModals.size > 0;
 export const modalsDirty = () => [...openModals].some((m) => !m.keepOnNavigate && m.isDirty?.());
 export const confirmBox = (title, text, okLabel = "Delete", danger = true) => modal(String(html`
   <h2>${title}</h2><p class="muted">${text}</p>

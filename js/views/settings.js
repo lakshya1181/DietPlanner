@@ -4,8 +4,17 @@ import { html, icon, toast, confirmBox, modal, to12, to24, addDaysIso, SLOT_ICON
 import * as G from "../google.js";
 import * as sync from "../sync.js";
 import { downloadBlob } from "../export.js";
-import { canInstall, installApp, connectOrSync, isIOS, isStandalone } from "../app.js";
+import { canInstall, installApp, connectOrSync, isIOS, isStandalone, applyTheme, themePref } from "../app.js";
 import { DEFAULT_SETTINGS, PDF_SECTIONS } from "../defaults.js";
+
+const trashLabel = (t) => t.kind === "client" ? `${t.item.name}${t.item.code ? ` (${t.item.code})` : ""}${t.plans?.length ? ` + ${t.plans.length} plan${t.plans.length > 1 ? "s" : ""}` : ""}`
+  : t.kind === "plan" ? `${store.client(t.item.clientId)?.name || "Deleted client"} – ${t.item.days === 7 && t.item.weekNumber ? `Week ${t.item.weekNumber}` : `${t.item.days}-day plan`} from ${t.item.startDate}`
+  : t.kind === "recipe" ? t.item.name : t.kind === "meal" ? t.item.text
+  : t.kind === "note" ? `Note for ${t.clientName || "client"}: ${String(t.item.text || "").slice(0, 50)}`
+  : t.kind === "payment" ? `Payment ${DietRender.inr(t.item.amount)} – ${t.clientName || "client"} (${t.item.date}${t.item.receiptNo ? ", " + t.item.receiptNo : ""})`
+  : t.kind === "package" ? `Package “${t.item.name}” ${DietRender.inr(t.item.fee)} – ${t.clientName || "client"}`
+  : t.kind === "template" ? `Template “${t.item.name}”`
+  : t.kind === "appointment" ? `Appointment ${t.item.date} ${t.item.time || ""}` : t.kind;
 
 export default function settingsView(ctx) {
   ctx.title("Settings");
@@ -29,19 +38,43 @@ export default function settingsView(ctx) {
     ${canInstall() ? html`<div class="card row" style="background:var(--teal-soft)"><div class="grow"><b>Install the app</b><div class="small muted">Adds an icon to your home screen / Start menu.</div></div>
       <button class="btn teal small" id="install">${icon("install")} Install</button></div>` : ""}
 
-    <div class="card"><h2>${icon("cloud")} Google account</h2>
-      <p class="small muted">Stores your data in your own Google Drive (folder “${window.APP_CONFIG.driveFolderName}”) so phone and laptop stay in sync, and adds reminders to a separate “${window.APP_CONFIG.calendarName}” calendar.</p>
-      <div class="stack">
-        <label class="field"><span>Google OAuth Client ID (one-time setup – see README)</span>
+    <div class="card"><h2>${icon("cloud")} Google Drive</h2>
+      ${(() => { const acc = G.account(), on = G.hasToken(), was = G.wasConnected();
+        if (!G.isConfigured()) return html`<p class="small muted">Google isn't set up yet. Open <b>Setup (advanced)</b> below and add the Client ID (see README).</p>`;
+        if (!was && !on) return html`<p class="small muted">Not connected. Your data is saved on this device only. Connect to keep it in your own Google Drive (folder “${window.APP_CONFIG.driveFolderName}”) and in sync between phone and laptop.</p>
+          <button class="btn teal" id="connect">${icon("cloud")} Connect Google</button>`;
+        return html`<div class="acct">
+            <div class="avatar" style="width:42px;height:42px;font-size:16px;background:${on ? "var(--teal)" : "#9AA5B1"}">${(acc?.email || "G")[0].toUpperCase()}</div>
+            <div class="grow"><div><b>${on ? "Connected to Google Drive" : "Paused – tap Reconnect"}</b></div>
+              <div class="small">${acc?.email || "Google account"}</div>
+              <div class="tiny muted">${ss.status === "ok" ? `Last synced ${ss.last ? ss.last.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}` : ss.status === "syncing" ? "Syncing…" : ss.status === "error" ? `Problem: ${ss.error}` : on ? "Ready" : "Sign-in expired (Google allows about 1 hour). One tap continues."}</div></div></div>
+          ${on && !G.calendarGranted() ? html`<p class="small" style="color:var(--warn);margin:8px 0 0">Calendar permission was not given – reminders are off. Disconnect and connect again to allow it.</p>` : ""}
+          <div class="row wrap" style="margin-top:10px">
+            <button class="btn teal" id="connect">${icon("cloud")} ${on ? "Sync now" : "Reconnect"}</button>
+            <button class="btn ghost" id="switchAcc">Switch account</button>
+            <button class="btn ghost" id="disconnect">Disconnect</button></div>`; })()}
+      ${isIOS() && isStandalone() ? html`<p class="tiny muted" style="margin:8px 0 0">On iPhone, if “Connect Google” doesn’t finish inside the home-screen app, use the app in Safari instead (bookmark the link). The home-screen app and Safari keep separate copies, so connect Google in the one you use — your data comes from Drive.</p>` : ""}
+      <label class="inline-check" style="margin-top:10px"><input type="checkbox" data-bool="sync.saveExportsToDrive" ${st.sync.saveExportsToDrive ? "checked" : ""}> Save a copy of every exported PDF / PNG to Drive</label>
+      <details class="more" style="margin-top:10px"><summary class="small muted">Setup (advanced)</summary>
+        <label class="field" style="margin-top:8px"><span>Google OAuth Client ID (one-time setup – see README)</span>
           <input type="text" id="cid" value="${G.clientId()}" placeholder="xxxxx.apps.googleusercontent.com" ${window.APP_CONFIG.googleClientId ? "readonly" : ""}></label>
-        <div class="row wrap"><span class="badge ${ss.status === "ok" ? "green" : ss.status === "error" ? "red" : ""}">${statusText}</span>
-          ${G.hasToken() && !G.calendarGranted() ? html`<span class="badge amber">Calendar permission not granted</span>` : ""}</div>
-        <div class="row wrap">
-          <button class="btn teal" id="connect" ${G.isConfigured() ? "" : "disabled"}>${icon("cloud")} ${G.hasToken() ? "Sync now" : "Connect Google"}</button>
-          ${G.wasConnected() ? html`<button class="btn ghost" id="disconnect">Disconnect</button>` : ""}</div>
-        ${isIOS() && isStandalone() ? html`<p class="tiny muted" style="margin:0">On iPhone, if “Connect Google” doesn’t finish inside the home-screen app, use the app in Safari instead (bookmark the link). The home-screen app and Safari keep separate copies, so connect Google in the one you use — your data comes from Drive.</p>` : ""}
-        <label class="inline-check"><input type="checkbox" data-bool="sync.saveExportsToDrive" ${st.sync.saveExportsToDrive ? "checked" : ""}> Save a copy of every exported PDF / PNG to Drive</label>
-      </div></div>
+        ${window.APP_CONFIG.googleClientId ? html`<p class="tiny muted" style="margin:4px 0 0">Set in js/config.js for every device – nothing to do here.</p>` : ""}
+      </details></div>
+
+    ${G.wasConnected() || G.hasToken() ? html`<div class="card"><h2>${icon("download")} Backups in Drive</h2>
+      <p class="small muted">Once a week the app asks whether to save a backup copy in Drive (folder “Backups”, last 8 kept). ${store.data.backup?.lastAt ? html`Last backup: <b>${new Date(store.data.backup.lastAt).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}</b>.` : "No backup yet."}</p>
+      <div class="row wrap"><button class="btn ghost" id="backupNow">${icon("cloud")} Back up now</button><button class="btn ghost" id="showBackups">Restore from a Drive backup…</button></div></div>` : ""}
+
+    <div class="card"><h2>${icon("trash")} Recycle bin</h2>
+      ${(store.data.trash || []).length ? html`<p class="small muted">Deleted items are kept for 30 days, then removed for good.</p>
+        <div class="list">${store.data.trash.map((t) => html`<div class="row-item" style="grid-template-columns:1fr auto">
+          <div><b>${trashLabel(t)}</b><div class="tiny muted">${t.kind[0].toUpperCase() + t.kind.slice(1)} · deleted ${new Date(t.deletedAt).toLocaleDateString([], { day: "numeric", month: "short" })} · ${Math.max(0, 30 - Math.floor((Date.now() - Date.parse(t.deletedAt)) / 86400000))} days left</div></div>
+          <div class="row"><button class="btn small" data-untrash="${t.id}">Restore</button><button class="icon-btn danger" data-killtrash="${t.id}" aria-label="Delete forever">${icon("trash")}</button></div></div>`)}</div>
+        <button class="btn small ghost" id="emptyTrash" style="margin-top:8px">Empty recycle bin</button>` : html`<p class="small muted">Empty. Deleted clients, plans, recipes, meals, notes and appointments wait here for 30 days so you can restore them.</p>`}</div>
+
+    <div class="card"><h2>Appearance</h2>
+      <p class="small muted">Saved on this device. “Automatic” follows the phone / computer setting. The moon/sun button at the top switches quickly.</p>
+      <div class="seg" id="themeSeg">${[["light", "Light"], ["dark", "Dark"], ["auto", "Automatic"]].map(([k, l]) => html`<button data-theme="${k}" class="${themePref() === k ? "on" : ""}">${l}</button>`)}</div></div>
 
     <div class="card"><h2>Branding</h2>
       <div class="form-grid">
@@ -54,6 +87,16 @@ export default function settingsView(ctx) {
           <input type="range" min="0" max="25" value="${Math.round(st.branding.watermarkOpacity * 100)}" id="wm"></label>
         <div class="half"><span class="field-label">Paper size</span><div class="seg" data-segpath="page.size">${["A4", "LETTER"].map((p) => html`<button data-v="${p}" class="${st.page.size === p ? "on" : ""}">${p === "A4" ? "A4" : "Letter"}</button>`)}</div></div>
         <label class="inline-check full"><input type="checkbox" data-bool="branding.coverLogo" ${st.branding.coverLogo ? "checked" : ""}> Show logo on the PDF cover</label>
+      </div></div>
+
+    <div class="card"><h2>Payments & receipts</h2>
+      <div class="form-grid">
+        <label class="field full"><span>Payment modes (comma separated)</span><input type="text" id="payModes" value="${(st.paymentModes || []).join(", ")}"></label>
+        <label class="field full"><span>Your details on receipts (address, phone, GSTIN… one per line, optional)</span><textarea data-path="receipt.details" rows="3" placeholder="Clinic address&#10;Phone">${st.receipt?.details || ""}</textarea></label>
+        <label class="field half"><span>UPI ID (for invoices, optional)</span><input type="text" data-path="receipt.upiId" value="${st.receipt?.upiId || ""}" placeholder="name@okhdfcbank" autocapitalize="off" spellcheck="false"></label>
+        <label class="field half"><span>Name on UPI (optional)</span><input type="text" data-path="receipt.upiName" value="${st.receipt?.upiName || ""}" placeholder="${st.branding.name}"></label>
+        <label class="field full"><span>Bank details for invoices (optional, one per line)</span><textarea data-path="receipt.bank" rows="3" placeholder="A/c name&#10;A/c no.&#10;IFSC">${st.receipt?.bank || ""}</textarea></label>
+        <label class="field full"><span>Line at the bottom of receipts and invoices (optional)</span><input type="text" data-path="receipt.note" value="${st.receipt?.note || ""}"></label>
       </div></div>
 
     <div class="card"><div class="card-head"><h2>Meal plan types</h2><button class="btn small teal" id="newType">${icon("plus")} Create new plan type</button></div>
@@ -136,12 +179,34 @@ export default function settingsView(ctx) {
     <p class="tiny muted" style="text-align:center">NutriWise Diet Planner v${window.APP_CONFIG.appVersion}</p>`);
   }
 
+  async function pickBackup() {
+    let files;
+    try { files = await sync.listBackups(); } catch (e) { return toast(e.code === "auth" ? "Reconnect Google first" : "Couldn't read Drive: " + e.message, 4000); }
+    if (!files.length) return toast("No backups in Drive yet – tap “Back up now” to make one.", 3500);
+    const fmt = (f) => { const m = /(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2}))?/.exec(f.name); const d = m ? new Date(m[1] + "T00:00") : new Date(f.createdTime);
+      return `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}${m?.[2] ? ` ${m[2]}:${m[3]}` : ""}`; };
+    const id = await modal(String(html`<h2>Restore from Drive</h2><p class="small muted">Everything on this device (and, after the next sync, in Drive) is replaced by the copy you choose. A safety copy of the current data is saved first, so you can undo this.</p>
+      <div class="stack" style="margin-top:10px">${files.map((f) => html`<button class="choice" data-close="${f.id}"><span><b>${fmt(f)}</b><span class="small muted">${f.name.includes("before-restore") ? "Safety copy made before a restore" : "Weekly backup"} · ${Math.max(1, Math.round((+f.size || 0) / 1024))} KB</span></span></button>`)}</div>
+      <div class="actions"><button class="btn ghost" data-close="">Cancel</button></div>`));
+    if (!id) return;
+    const f = files.find((x) => x.id === id);
+    if (!(await confirmBox("Restore this backup?", `Replace all current data with the backup from ${fmt(f)}?`, "Restore", false))) return;
+    try { await sync.restoreBackup(id); st = store.settings; toast("Backup restored"); } catch (e) { toast("Restore failed: " + e.message, 5000); }
+    render();
+  }
+
   const setPath = (path, val) => { const ks = path.split("."); let o = st; ks.slice(0, -1).forEach((k) => (o = o[k])); o[ks.at(-1)] = val; };
   const getPath = (path) => path.split(".").reduce((o, k) => o[k], st);
 
   v.addEventListener("change", async (e) => {
     const t = e.target;
     if (t.id === "cid") { local.set("googleClientId", t.value.trim()); toast("Client ID saved on this device"); return render(); }
+    if (t.id === "payModes") {
+      const list = [...new Set(t.value.split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 8);
+      if (!list.length) { t.value = (st.paymentModes || []).join(", "); return toast("Add at least one payment mode"); }
+      st.paymentModes = list; t.value = list.join(", "); return save("Saved");
+    }
+    if (t.dataset.path === "receipt.upiId" && t.value.trim() && !/^[\w.\-]{2,}@[a-zA-Z][\w.]{1,}$/.test(t.value.trim())) { toast("That doesn't look like a UPI ID (e.g. name@okhdfcbank)", 4000); t.focus(); return; }
     if (t.dataset.path) {
       if (!t.value.trim() && t.type !== "text") { t.value = getPath(t.dataset.path); return toast("This can't be empty"); }   // e.g. reminder time
       if (!t.value.trim() && ["branding.name", "healthIssuesTitle"].includes(t.dataset.path)) { t.value = getPath(t.dataset.path); return toast("This can't be empty"); }
@@ -203,7 +268,33 @@ export default function settingsView(ctx) {
     const b = e.target.closest("button, .chip"); if (!b) return;
     if (b.id === "install") return installApp();
     if (b.id === "connect") { await connectOrSync(); return render(); }
-    if (b.id === "disconnect") { sync.disconnect(); toast("Disconnected from Google"); return render(); }
+    if (b.id === "disconnect") {
+      if (!(await confirmBox("Disconnect Google?", "Syncing stops and the app's permission is removed from this Google account. Your data stays on this device and in Drive; connect again any time.", "Disconnect", false))) return;
+      sync.disconnect(); toast("Disconnected from Google"); return render(); }
+    if (b.dataset.theme) { applyTheme(b.dataset.theme); return render(); }
+    if (b.id === "switchAcc") {
+      try { await sync.switchAccount(); if (sync.syncState().status === "ok") toast(`Connected as ${G.account()?.email || "new account"}`); }
+      catch (e) { toast(e.message, 4500); }
+      st = store.settings; return render();
+    }
+    if (b.id === "backupNow") {
+      b.disabled = true; b.innerHTML = `<span class="spinner"></span> Saving…`;
+      try { const n = await sync.backupNow(); toast("Backup saved in Drive: " + n); } catch (e) { toast(e.code === "auth" ? "Reconnect Google first" : "Backup failed: " + e.message, 4500); }
+      return render();
+    }
+    if (b.id === "showBackups") return pickBackup();
+    if (b.dataset.untrash) {
+      try { const note = await store.restoreFromTrash(b.dataset.untrash); toast(note || "Restored", note ? 5000 : 2500); } catch (e) { toast(e.message, 4000); }
+      return render();
+    }
+    if (b.dataset.killtrash) {
+      if (!(await confirmBox("Delete forever?", "This can't be undone."))) return;
+      await store.deleteForever(b.dataset.killtrash); return render();
+    }
+    if (b.id === "emptyTrash") {
+      if (!(await confirmBox("Empty recycle bin?", `${store.data.trash.length} item(s) will be deleted for good. This can't be undone.`, "Empty bin"))) return;
+      await store.emptyTrash(); toast("Recycle bin emptied"); return render();
+    }
     if (b.id === "logoReset") { st.branding.logoDataUrl = null; await save("Default logo restored"); return render(); }
     const segp = b.parentElement?.dataset.segpath;
     if (segp) { setPath(segp, b.dataset.v); await save("Saved"); return render(); }
@@ -226,8 +317,9 @@ export default function settingsView(ctx) {
       sl.splice(+b.dataset.i, 1); await save("Section removed"); return render();
     }
     if (b.dataset.delpt) {
-      const pk = b.dataset.delpt, used = store.data.plans.filter((x) => x.pattern === pk).length;
+      const pk = b.dataset.delpt, used = store.data.plans.filter((x) => x.pattern === pk).length, tpl = (store.data.templates || []).filter((x) => x.pattern === pk).length;
       if (used) return toast(`Can't delete: ${used} saved plan${used > 1 ? "s use" : " uses"} this type`, 4000);
+      if (tpl) return toast(`Can't delete: ${tpl} template${tpl > 1 ? "s use" : " uses"} this type (Meals → Templates)`, 4000);
       if (!(await confirmBox("Delete plan type?", `“${st.mealPatterns[pk].label}” will be removed.`))) return;
       delete st.mealPatterns[pk];
       for (const c of store.data.clients) if (c.mealPattern === pk) c.mealPattern = "";

@@ -412,7 +412,7 @@
           { text: planTitle(plan), fontSize: 32, bold: true, color: t.navy, lineHeight: 0.95 },
           { text: rangeText(plan), fontSize: 10.5, color: t.muted }], alignment: "right", margin: [0, 16, 0, 0] }] },
       { stack: [eyebrow("Prepared for", t.muted), { text: client.name, fontSize: nameFs, bold: true, color: t.ink },
-        client.code ? { text: `Client ID: ${client.code}`, fontSize: 9, color: t.muted, margin: [0, 1, 0, 0] } : "",
+        client.code && sectionOn(plan, settings, "clientId") ? { text: `Client ID: ${client.code}`, fontSize: 9, color: t.muted, margin: [0, 1, 0, 0] } : "",
         (() => { const pi = sectionOn(plan, settings, "program") && programInfo(client, plan.startDate, []);
           return pi ? { text: [{ text: "Program: ", bold: true, color: t.navy }, `${fmtRange(pi.start, pi.effEnd)}  ·  ${pi.total} days`,
             pi.holdDays ? ` + ${pi.holdDays} hold day${pi.holdDays > 1 ? "s" : ""}` : ""],
@@ -423,7 +423,7 @@
         stat("Blood group", client.bloodGroup || "–"),
         band ? stat("BMI", String(mx.bmi), `${band.label}  ·  at ${mx.current.kg} kg`, band.color, "#FFFFFF") : stat("BMI", "–"),
       ], W, 60 - cz * 2, 10) },
-      { _sec: "weightProgress", margin: [0, 12, 0, 0], ...card([
+      ...(!mx.start ? [] : [{ _sec: "weightProgress", margin: [0, 12, 0, 0], ...card([
         iconTitle(icon("trend", t.teal, 15), "Weight Progress", t.teal),
         { columns: [
           { width: 110, stack: [
@@ -432,19 +432,18 @@
             mini(lost == null ? "Change" : lost >= 0 ? "Total lost" : "Gained",
               lost == null ? "–" : `${Math.abs(lost).toFixed(1)} kg`, progressColor)] },
           weightChart(mx.log, settings, W - 110 - 26 - 40, 92 - cz * 26),
-        ], columnGap: 8 }], t.teal, "#F1F8F7") },
+        ], columnGap: 8 }], t.teal, "#F1F8F7") }]),
       ...(measurementCard(client, plan, settings) ? [{ _sec: "measurements", margin: [0, 10, 0, 0], ...measurementCard(client, plan, settings) }] : []),
       { _cards: true, columns: [
-        sectionOn(plan, settings, "health") && card([iconTitle(icon("heart", t.coral, 15), "Health", t.coral),
-          fld("Medical problems", client.medical, t, { bold: true }),
-          fld(settings.healthIssuesTitle || "Health issues", healthChips(healthItems(client, settings), t), t),
-          fld("Food allergies", client.allergies, t)].filter(Boolean), t.coral, "#FDF3F1"),
-        sectionOn(plan, settings, "food") && card([iconTitle(icon("leaf", t.green, 15), "Food", t.green),
-          fld("Preference", pref ? { table: { widths: [12, "*"], body: [[foodMark(pref.label, pref.color, 12), { text: pref.label, fontSize: 9.5, bold: true, color: pref.color }]] },
+        (() => { const f = [fld("Medical problems", client.medical, t, { bold: true }),   // card left out when there is nothing to show
+            fld(settings.healthIssuesTitle || "Health issues", healthChips(healthItems(client, settings), t), t),
+            fld("Food allergies", client.allergies, t)].filter(Boolean);
+          return sectionOn(plan, settings, "health") && f.length ? card([iconTitle(icon("heart", t.coral, 15), "Health", t.coral), ...f], t.coral, "#FDF3F1") : null; })(),
+        (() => { const f = [fld("Preference", pref ? { table: { widths: [12, "*"], body: [[foodMark(pref.label, pref.color, 12), { text: pref.label, fontSize: 9.5, bold: true, color: pref.color }]] },
             layout: { defaultBorder: false, paddingLeft: (i) => (i ? 5 : 0), paddingRight: () => 0, paddingTop: () => 0, paddingBottom: () => 0 } } : client.foodPreference, t),
           fld("Preference notes", client.foodNotes, t),
-          fld("Likes", client.likes, t), fld("Dislikes", client.dislikes, t), fld("Water intake", client.water, t)].filter(Boolean),
-          t.green, "#F2F8EC"),
+          fld("Likes", client.likes, t), fld("Dislikes", client.dislikes, t), fld("Water intake", client.water, t)].filter(Boolean);
+          return sectionOn(plan, settings, "food") && f.length ? card([iconTitle(icon("leaf", t.green, 15), "Food", t.green), ...f], t.green, "#F2F8EC") : null; })(),
       ].filter(Boolean), columnGap: 12, margin: [0, 10, 0, 0] },
     ].filter((b) => (b._sec ? sectionOn(plan, settings, b._sec) : true) && !(b._cards && !b.columns.length));
 
@@ -496,7 +495,8 @@
           paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 5, paddingBottom: () => 5,
           fillColor: (row, node, col) => (col < 2 ? t.soft : null) } },
     ];
-    const groups = plan.guidelines.filter((g) => g.items.length);
+    const isPlaceholder = (x) => /^Edit your default .* list in Settings$/i.test(String(x).trim());
+    const groups = plan.guidelines.map((g) => ({ ...g, items: g.items.filter((x) => String(x).trim() && !isPlaceholder(x)) })).filter((g) => g.items.length);
     const guideTail = [];
     const guide = [
       ...summaryBlock,
@@ -630,6 +630,117 @@
   }
 
 
+  // ---------- money (Indian format) ----------
+  const inr = (n) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
+  function amountInWords(n) {
+    n = Math.round(+n || 0); if (!n) return "Rupees Zero Only";
+    const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+    const two = (x) => (x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""));
+    const three = (x) => (x >= 100 ? a[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " + two(x % 100) : "") : two(x));
+    const parts = []; const crore = Math.floor(n / 1e7), lakh = Math.floor((n % 1e7) / 1e5), thou = Math.floor((n % 1e5) / 1000), rest = n % 1000;
+    if (crore) parts.push(three(crore) + " Crore"); if (lakh) parts.push(two(lakh) + " Lakh"); if (thou) parts.push(two(thou) + " Thousand"); if (rest) parts.push(three(rest));
+    return "Rupees " + parts.join(" ") + " Only";
+  }
+
+  // ---------- payment receipt (one page, A5-like on A4 width) ----------
+  // r = { client, payment, packageName, fee, paidTotal, due, extra }
+  function buildReceiptDoc(r, settings, images) {
+    const t = settings.theme, b = settings.branding, rc = settings.receipt || {}, client = normClient(r.client || {}), p = r.payment;
+    const W = contentWidth(settings, false);
+    const dmy = (iso) => { const d = parseDate(iso); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+    const tile = (label, value, o = {}) => ({ stack: [{ text: label, fontSize: 7.5, characterSpacing: 1.2, color: o.fg ? "#FFFFFF" : t.muted },
+        { text: value, bold: true, fontSize: 13, color: o.fg || o.color || t.navy, decoration: o.strike ? "lineThrough" : undefined },
+        ...(o.sub ? [{ text: o.sub, fontSize: 7.5, color: o.fg ? "#FFFFFF" : t.muted, margin: [0, 1, 0, 0] }] : [])], fillColor: o.fill || t.soft, margin: [10, 8, 10, 8] });
+    const line = (label, value, bold) => [{ text: label, color: t.muted, fontSize: 9.5 }, { text: value, bold: !!bold, fontSize: 10.5, alignment: "right" }];
+    const content = [
+      { columns: [
+        images.logo ? { image: images.logo, fit: [90, 70], width: 100 } : { text: "", width: 0 },
+        { stack: [{ text: b.name, bold: true, fontSize: 15, color: t.navy }, b.tagline ? { text: b.tagline, fontSize: 9, color: t.muted } : "",
+          ...String(rc.details || "").split("\n").filter(Boolean).map((x) => ({ text: x, fontSize: 8.5, color: t.muted }))], alignment: "right" }] },
+      { canvas: [{ type: "rect", x: 0, y: 0, w: W, h: 3, color: t.teal }], margin: [0, 12, 0, 14] },
+      { columns: [{ text: "PAYMENT RECEIPT", bold: true, fontSize: 18, color: t.navy, characterSpacing: 1 },
+        { stack: [{ text: `Receipt No. ${p.receiptNo || ""}`, bold: true, fontSize: 10, alignment: "right" }, { text: dmy(p.date), fontSize: 9.5, color: t.muted, alignment: "right" }] }], margin: [0, 0, 0, 16] },
+      { table: { widths: ["*"], body: [[{ stack: [
+          { text: "RECEIVED FROM", fontSize: 7.5, characterSpacing: 1.2, color: t.muted },
+          { text: client.name, bold: true, fontSize: 14, color: t.ink, margin: [0, 2, 0, 0] },
+          { text: [client.code ? `Client ID: ${client.code}` : "", client.phone ? `${client.code ? "   ·   " : ""}+${client.phoneCode || "91"} ${client.phone}` : ""].join(""), fontSize: 9, color: t.muted }],
+          fillColor: t.soft, margin: [12, 10, 12, 10] }]] }, layout: "noBorders", margin: [0, 0, 0, 14] },
+      { table: { widths: [110, "*"], body: [
+          [{ text: "Amount received", fontSize: 11, color: t.muted, margin: [0, 6, 0, 0] }, { text: inr(p.amount), bold: true, fontSize: 24, color: t.green || t.teal, alignment: "right" }],
+          [{ text: amountInWords(p.amount), colSpan: 2, italics: true, fontSize: 9.5, color: t.muted, margin: [0, 0, 0, 8] }, {}],
+          line("Payment mode", p.mode || "–"),
+          line("For", (r.packageName || "Diet consultation") + (r.packageStart && r.packageEnd ? `  (${dmy(r.packageStart)} – ${dmy(r.packageEnd)})` : "")),
+          ...(p.note ? [line("Note", p.note)] : []),
+        ] }, layout: { hLineWidth: (i) => (i >= 2 ? 0.6 : 0), vLineWidth: () => 0, hLineColor: () => "#E3E8EE", paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 0, paddingRight: () => 0 } },
+      ...(r.fee || r.price ? [{ margin: [0, 16, 0, 0], table: { widths: r.discount ? ["*", "*", "*"] : ["*", "*", "*"], body: [
+          ...(r.discount ? [[tile("PRICE", inr(r.price), { strike: true, color: t.muted }),
+            tile(`DISCOUNT${r.discountPct != null ? ` (${r.discountPct}%)` : ""}`, "− " + inr(r.discount), { color: t.green || t.teal, fill: "#EEF7E6", sub: r.discountReason || "" }),
+            tile("TOTAL FEE", inr(r.fee))]] : []),
+          [r.discount ? tile("PAID TILL DATE", inr(r.paidTotal)) : tile("TOTAL FEE", inr(r.fee)),
+           r.discount ? tile(r.due > 0 ? "BALANCE DUE" : r.extra > 0 ? "ADVANCE" : "BALANCE", r.due > 0 ? inr(r.due) : r.extra > 0 ? inr(r.extra) : "Fully paid", r.due > 0 ? { fill: t.coral, fg: "#FFFFFF" } : { fill: "#E6F4F2", color: t.green || t.teal })
+             : tile("PAID TILL DATE", inr(r.paidTotal)),
+           r.discount ? { text: "" } : tile(r.due > 0 ? "BALANCE DUE" : r.extra > 0 ? "ADVANCE" : "BALANCE", r.due > 0 ? inr(r.due) : r.extra > 0 ? inr(r.extra) : "Fully paid", r.due > 0 ? { fill: t.coral, fg: "#FFFFFF" } : { fill: "#E6F4F2", color: t.green || t.teal })]] },
+          layout: { hLineWidth: () => 6, hLineColor: () => "#FFFFFF", vLineWidth: () => 6, vLineColor: () => "#FFFFFF", paddingLeft: () => 0, paddingRight: () => 0, paddingTop: () => 0, paddingBottom: () => 0 } }] : []),
+      ...(r.savedLine ? [{ text: r.savedLine, bold: true, fontSize: 12, color: t.green || t.teal, alignment: "center", margin: [0, 12, 0, 0] }] : []),
+      ...(rc.note ? [{ text: rc.note, fontSize: 9.5, color: t.ink, margin: [0, 18, 0, 0] }] : []),
+      { text: "This is a computer-generated receipt.", fontSize: 7.5, color: t.muted, alignment: "center", margin: [0, 30, 0, 0] },
+    ];
+    return { pageSize: settings.page.size, pageMargins: settings.page.margins, content,
+      defaultStyle: { font: t.font, fontSize: 10, color: t.ink }, info: { title: `Receipt ${p.receiptNo || ""} - ${client.name}`, author: b.name } };
+  }
+
+  // ---------- invoice (asks the client to pay; made before or between payments) ----------
+  // r = { client, invoiceNo, date, packageName, start, price, discount, discountPct, discountReason, fee, paid, due, savedLine, showPay, showQr }
+  function upiLink(rc, amount, note, payee) {
+    return `upi://pay?pa=${encodeURIComponent(rc.upiId).replace(/%40/g, "@")}&pn=${encodeURIComponent(payee)}&am=${(+amount).toFixed(2)}&cu=INR&tn=${encodeURIComponent(note)}`;
+  }
+  function buildInvoiceDoc(r, settings, images) {
+    const t = settings.theme, b = settings.branding, rc = settings.receipt || {}, client = normClient(r.client || {});
+    const dmy = (iso) => { const d = parseDate(iso); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+    const row = (label, value, o = {}) => [{ text: label, fontSize: o.big ? 12 : 10, bold: !!o.big, color: o.big ? t.navy : t.muted, margin: [0, o.big ? 4 : 0, 0, 0] },
+      { text: value, fontSize: o.big ? 18 : 10.5, bold: !!(o.big || o.bold), alignment: "right", color: o.color || (o.big ? t.coral : t.ink), decoration: o.strike ? "lineThrough" : undefined }];
+    const lines = [
+      ...(r.discount ? [row("Price", inr(r.price), { strike: true }),
+        [{ stack: [{ text: `Discount${r.discountPct != null ? ` (${r.discountPct}%)` : ""}`, fontSize: 10, color: t.green || t.teal }, ...(r.discountReason ? [{ text: r.discountReason, fontSize: 8, color: t.muted }] : [])] },
+         { text: "− " + inr(r.discount), fontSize: 10.5, bold: true, alignment: "right", color: t.green || t.teal }]] : []),
+      row("Total fee", inr(r.fee), { bold: true }),
+      ...(r.paid ? [row("Paid so far", "− " + inr(r.paid))] : []),
+      row("AMOUNT DUE", inr(r.due), { big: true }),
+    ];
+    const payee = rc.upiName || b.name;
+    const payBlock = [];
+    if (r.showPay && (rc.upiId || rc.bank)) payBlock.push({ stack: [{ text: "HOW TO PAY", fontSize: 7.5, characterSpacing: 1.2, color: t.muted, margin: [0, 0, 0, 4] },
+      ...(rc.upiId ? [{ text: [{ text: "UPI: ", color: t.muted }, { text: rc.upiId, bold: true }], fontSize: 10.5 }, ...(rc.upiName ? [{ text: `Name: ${rc.upiName}`, fontSize: 9, color: t.muted }] : [])] : []),
+      ...(rc.bank ? [{ text: "Bank transfer", fontSize: 9, color: t.muted, margin: [0, rc.upiId ? 8 : 0, 0, 1] }, ...String(rc.bank).split("\n").filter(Boolean).map((x) => ({ text: x, fontSize: 9.5 }))] : [])], width: "*" });
+    if (r.showQr && rc.upiId && r.due > 0) payBlock.push({ stack: [{ qr: upiLink(rc, r.due, `Invoice ${r.invoiceNo}`, payee), fit: 120, foreground: t.navy, alignment: "center" },
+      { text: `Scan to pay ${inr(r.due)}`, fontSize: 8.5, color: t.muted, alignment: "center", margin: [0, 4, 0, 0] }, { text: "GPay · PhonePe · Paytm · any UPI app", fontSize: 7, color: t.muted, alignment: "center" }], width: 150 });
+    const content = [
+      { columns: [
+        images.logo ? { image: images.logo, fit: [90, 70], width: 100 } : { text: "", width: 0 },
+        { stack: [{ text: b.name, bold: true, fontSize: 15, color: t.navy }, b.tagline ? { text: b.tagline, fontSize: 9, color: t.muted } : "",
+          ...String(rc.details || "").split("\n").filter(Boolean).map((x) => ({ text: x, fontSize: 8.5, color: t.muted }))], alignment: "right" }] },
+      { canvas: [{ type: "rect", x: 0, y: 0, w: contentWidth(settings, false), h: 3, color: t.navy }], margin: [0, 12, 0, 14] },
+      { columns: [{ text: "INVOICE", bold: true, fontSize: 20, color: t.navy, characterSpacing: 1.5 },
+        { stack: [{ text: `Invoice No. ${r.invoiceNo}`, bold: true, fontSize: 10, alignment: "right" }, { text: dmy(r.date), fontSize: 9.5, color: t.muted, alignment: "right" }] }], margin: [0, 0, 0, 16] },
+      { table: { widths: ["*"], body: [[{ stack: [
+          { text: "BILL TO", fontSize: 7.5, characterSpacing: 1.2, color: t.muted },
+          { text: client.name, bold: true, fontSize: 14, color: t.ink, margin: [0, 2, 0, 0] },
+          { text: [client.code ? `Client ID: ${client.code}` : "", client.phone ? `${client.code ? "   ·   " : ""}+${client.phoneCode || "91"} ${client.phone}` : ""].join(""), fontSize: 9, color: t.muted }],
+          fillColor: t.soft, margin: [12, 10, 12, 10] }]] }, layout: "noBorders", margin: [0, 0, 0, 16] },
+      { columns: [{ text: "DESCRIPTION", fontSize: 7.5, characterSpacing: 1.2, color: t.muted }, { text: "AMOUNT", fontSize: 7.5, characterSpacing: 1.2, color: t.muted, alignment: "right" }], margin: [0, 0, 0, 4] },
+      { text: [{ text: r.packageName || "Diet consultation", bold: true }, r.start ? { text: r.end ? `   ${dmy(r.start)} – ${dmy(r.end)}` : `   from ${dmy(r.start)}`, color: t.muted, fontSize: 9 } : ""], fontSize: 11, margin: [0, 0, 0, 8] },
+      { table: { widths: ["*", 140], body: lines }, layout: { hLineWidth: (i, n) => (i === n.table.body.length - 1 ? 1 : 0), hLineColor: () => t.navy, vLineWidth: () => 0, paddingLeft: () => 0, paddingRight: () => 0, paddingTop: () => 5, paddingBottom: () => 5 } },
+      { text: amountInWords(r.due), italics: true, fontSize: 9, color: t.muted, alignment: "right", margin: [0, 2, 0, 0] },
+      ...(r.savedLine ? [{ text: r.savedLine, bold: true, fontSize: 12, color: t.green || t.teal, alignment: "center", margin: [0, 14, 0, 0] }] : []),
+      ...(payBlock.length ? [{ table: { widths: ["*"], body: [[{ columns: payBlock, columnGap: 16, fillColor: "#F1F8F7", margin: [12, 12, 12, 12] }]] }, layout: "noBorders", margin: [0, 18, 0, 0] }] : []),
+      ...(rc.note ? [{ text: rc.note, fontSize: 9.5, color: t.ink, margin: [0, 18, 0, 0] }] : []),
+      { text: "This is a computer-generated invoice.", fontSize: 7.5, color: t.muted, alignment: "center", margin: [0, 30, 0, 0] },
+    ];
+    return { pageSize: settings.page.size, pageMargins: settings.page.margins, content,
+      defaultStyle: { font: t.font, fontSize: 10, color: t.ink }, info: { title: `Invoice ${r.invoiceNo} - ${client.name}`, author: b.name } };
+  }
+
   // ---------- fonts: Poppins (Latin + Hindi/Devanagari + ₹) with a symbol fallback (✓ → ★ …) ----------
   // Every text in a document is split into runs: characters Poppins has stay as they are, symbols go to the
   // "Sym" font, emoji are left out (PDF fonts can't draw them). Anything else (e.g. Gujarati) is reported in doc._missing.
@@ -675,8 +786,8 @@
     return doc;
   }
 
-  const api = { recipeHasContent, buildCoverFitDoc, recipeFileName, buildRecipeDoc, programInfo, buildPlanDoc, buildTableDoc, buildTableFitDoc, sectionOn, healthItems, patternOf, slotInfo, resolveSlots, fileBaseName, computeBmi, bmiBand, metrics, resolveSlots };
-  for (const k of ["buildPlanDoc", "buildTableDoc", "buildTableFitDoc", "buildRecipeDoc", "buildCoverFitDoc"]) { const f = api[k]; api[k] = (...a) => withFonts(f(...a)); }
+  const api = { buildInvoiceDoc, inr, amountInWords, buildReceiptDoc, recipeHasContent, buildCoverFitDoc, recipeFileName, buildRecipeDoc, programInfo, buildPlanDoc, buildTableDoc, buildTableFitDoc, sectionOn, healthItems, patternOf, slotInfo, resolveSlots, fileBaseName, computeBmi, bmiBand, metrics, resolveSlots };
+  for (const k of ["buildPlanDoc", "buildTableDoc", "buildTableFitDoc", "buildRecipeDoc", "buildCoverFitDoc", "buildReceiptDoc", "buildInvoiceDoc"]) { const f = api[k]; api[k] = (...a) => withFonts(f(...a)); }
   api.FONT_FILES = { main: { 400: "poppins-full-400.woff", 600: "poppins-full-600.woff" }, sym: { 400: "sym-400.woff", 600: "sym-600.woff" } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.DietRender = api;

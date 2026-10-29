@@ -1,7 +1,7 @@
 // Export dialog: choose PDF / PNG / both → generate → share or download.
 import { store, local } from "../store.js";
 import { html, icon, modal, toast } from "../ui.js";
-import { buildFiles, buildRecipeFile, canShareFiles, shareFiles, downloadFiles } from "../export.js";
+import { buildFiles, buildRecipeFile, buildReceiptFile, buildInvoiceFile, canShareFiles, shareFiles, downloadFiles } from "../export.js";
 import { saveExportsToDrive } from "../sync.js";
 import { renderSettingsFor } from "../model.js";
 import * as G from "../google.js";
@@ -55,7 +55,7 @@ export function openExport(client, plan, opts = {}) {
               <b>${icon("check")} Ready</b>
               <ul class="small" style="margin:6px 0 0;padding-left:18px">${files.map((f) => html`<li>${f.name} <span class="muted">(${Math.round(f.size / 1024)} KB)</span></li>`)}</ul>
               ${driveNote ? html`<p class="small muted" style="margin:6px 0 0">${driveNote}</p>` : ""}
-              ${files.missing?.length ? html`<p class="small" style="margin:6px 0 0;color:#B4541B">Some characters can't be printed and may show as boxes: ${files.missing.slice(0, 8).join(" ")}. English and Hindi are supported.</p>` : ""}
+              ${files.missing?.length ? html`<p class="small" style="margin:6px 0 0;color:var(--warn)">Some characters can't be printed and may show as boxes: ${files.missing.slice(0, 8).join(" ")}. English and Hindi are supported.</p>` : ""}
             </div>`);
           // iPhone/iPad allow only one download per tap, so offer one button per file there.
           const oneTap = files.length > 1 && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
@@ -117,6 +117,64 @@ export function openRecipeExport(recipes) {
           });
         } catch (e) { console.error(e); toast("Export failed: " + e.message, 5000); go.disabled = false; go.textContent = "Create PDF"; }
       });
+    },
+  });
+}
+
+// Payment receipt PDF: created straight away, then Download / Share (and a copy in Drive if that setting is on).
+export function openReceiptExport(r) {
+  return modal(String(html`
+    <h2>Payment receipt</h2>
+    <p class="small muted">${r.payment.receiptNo} · ${r.client.name} · ${DietRender.inr(r.payment.amount)}</p>
+    <div id="result"><p class="small muted"><span class="spinner"></span> Creating…</p></div>
+    <div class="actions" id="acts"><button class="btn ghost" data-close="">Close</button></div>`), { discardCheck: false,
+    async onMount(el, close) {
+      try {
+        const file = await buildReceiptFile(r);
+        let driveNote = "";
+        if (store.settingsRO.sync.saveExportsToDrive && G.hasToken()) {
+          try { await saveExportsToDrive(r.client.code ? `${r.client.name} (${r.client.code})` : r.client.name, [file]); driveNote = "Copy saved to Google Drive."; } catch (e) { driveNote = "Could not save a copy to Drive: " + e.message; }
+        }
+        el.querySelector("#result").innerHTML = String(html`<div class="card" style="background:var(--green-soft);box-shadow:none;margin-top:6px">
+          <b>${icon("check")} Ready</b><div class="small" style="margin-top:4px">${file.name} <span class="muted">(${Math.round(file.size / 1024)} KB)</span></div>
+          ${driveNote ? html`<p class="small muted" style="margin:6px 0 0">${driveNote}</p>` : ""}</div>`);
+        const share = canShareFiles([file]);
+        el.querySelector("#acts").innerHTML = String(html`<button class="btn ghost" data-close="">Close</button><button class="btn ghost" id="dl">${icon("download")} Download</button>
+          ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
+        el.querySelector("#dl").onclick = () => { downloadFiles([file]); toast("Downloading…"); };
+        el.querySelector("#sh")?.addEventListener("click", async () => {
+          try { await shareFiles([file], file.name); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
+        });
+      } catch (e) { console.error(e); el.querySelector("#result").innerHTML = ""; toast("Receipt failed: " + e.message, 5000); }
+    },
+  });
+}
+
+// Invoice PDF (payment request): created straight away, then Download / Share (and a copy in Drive if that setting is on).
+export function openInvoiceExport(r) {
+  return modal(String(html`
+    <h2>Invoice</h2>
+    <p class="small muted">${r.invoiceNo} · ${r.client.name} · ${DietRender.inr(r.due)} due</p>
+    <div id="result"><p class="small muted"><span class="spinner"></span> Creating…</p></div>
+    <div class="actions" id="acts"><button class="btn ghost" data-close="">Close</button></div>`), { discardCheck: false,
+    async onMount(el, close) {
+      try {
+        const file = await buildInvoiceFile(r);
+        let driveNote = "";
+        if (store.settingsRO.sync.saveExportsToDrive && G.hasToken()) {
+          try { await saveExportsToDrive(r.client.code ? `${r.client.name} (${r.client.code})` : r.client.name, [file]); driveNote = "Copy saved to Google Drive."; } catch (e) { driveNote = "Could not save a copy to Drive: " + e.message; }
+        }
+        el.querySelector("#result").innerHTML = String(html`<div class="card" style="background:var(--green-soft);box-shadow:none;margin-top:6px">
+          <b>${icon("check")} Ready</b><div class="small" style="margin-top:4px">${file.name} <span class="muted">(${Math.round(file.size / 1024)} KB)</span></div>
+          ${driveNote ? html`<p class="small muted" style="margin:6px 0 0">${driveNote}</p>` : ""}</div>`);
+        const share = canShareFiles([file]);
+        el.querySelector("#acts").innerHTML = String(html`<button class="btn ghost" data-close="">Close</button><button class="btn ghost" id="dl">${icon("download")} Download</button>
+          ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
+        el.querySelector("#dl").onclick = () => { downloadFiles([file]); toast("Downloading…"); };
+        el.querySelector("#sh")?.addEventListener("click", async () => {
+          try { await shareFiles([file], file.name); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
+        });
+      } catch (e) { console.error(e); el.querySelector("#result").innerHTML = ""; toast("Invoice failed: " + e.message, 5000); }
     },
   });
 }

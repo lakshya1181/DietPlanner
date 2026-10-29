@@ -6,11 +6,11 @@ import { newPlanFor, planSlots, planEnd, renderablePlan, snapshotType, typeLabel
 import { openExport } from "./exportDialog.js";
 import { calendarReady, pushReminder, removeReminder, planEndReminder } from "../reminders.js";
 
-export async function askPattern(client) {
+export async function askPattern(client, forTemplate) {
   const s = store.settings;
   return modal(String(html`
     <h2>Meal plan type for ${client.name}</h2>
-    <p class="muted small">Asked once. All future plans for this client use the same type until you change it.</p>
+    <p class="muted small">${forTemplate ? "You can change it later on the template screen." : "Asked once. All future plans for this client use the same type until you change it."}</p>
     ${Object.entries(s.mealPatterns).map(([k, p]) => html`
       <button class="choice" data-close="${k}"><span class="big">${p.label[0]}</span>
         <span><b>${p.label}</b><span class="small muted">Main meals: ${p.slots.filter((x) => x.mode === "daily").map((x) => DietRender.slotInfo(x.id, {}, s).name).join(", ")}</span></span></button>`)}
@@ -53,6 +53,51 @@ async function pickRecipes(plan) {
   });
 }
 
+// ---------- plan templates ----------
+// A template is only the meal plan: type, days, meals with Daily/Same choices and timings.
+const TEMPLATE_KEYS = ["pattern", "patternSnapshot", "slotSnapshot", "days", "meals", "slotModes", "slotTimes"];
+export function templateFromPlan(plan, name) {
+  snapshotType(plan);
+  const t = { name };
+  for (const k of TEMPLATE_KEYS) if (plan[k] !== undefined) t[k] = structuredClone(plan[k]);
+  return t;
+}
+// Put a template's or another plan's content into this plan (dates, client, notes and call summary stay).
+// mealsOnly (templates): only the meal plan is taken; exercise, serving guide, guidelines, recipes and PDF ticks stay as they are.
+function applySource(plan, src, mealsOnly = false) {
+  plan.pattern = src.pattern; plan.days = Math.min(7, Math.max(1, +src.days || 7));
+  if (src.patternSnapshot) plan.patternSnapshot = structuredClone(src.patternSnapshot);
+  if (src.slotSnapshot) plan.slotSnapshot = structuredClone(src.slotSnapshot);
+  plan.meals = structuredClone(src.meals || {}); plan.slotModes = structuredClone(src.slotModes || {}); plan.slotTimes = structuredClone(src.slotTimes || {});
+  if (mealsOnly) return;
+  plan.exercise = structuredClone(src.exercise || []); plan.servingSizes = structuredClone(src.servingSizes || []);
+  plan.guidelines = structuredClone(src.guidelines || []).map((g) => ({ type: "prefer", title: "", ...g, items: g.items || [] }));
+  plan.recipeIds = [...(src.recipeIds || [])].filter((x) => store.recipe(x));
+  if (src.pdfSections) plan.pdfSections = { ...plan.pdfSections, ...structuredClone(src.pdfSections), callSummary: plan.pdfSections.callSummary };
+}
+// Anything on the screen that a template/copy would replace? (meals, recipes, or exercise/serving/guidelines changed from the defaults)
+function hasContent(plan) {
+  const d = store.settingsRO.defaults, same = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+  return Object.values(plan.meals || {}).some((m) => m && (m.shared || (m.days || []).some(Boolean))) || (plan.recipeIds || []).length > 0
+    || !same(plan.exercise, d.exercise) || !same(plan.servingSizes, d.servingSizes) || !same(plan.guidelines?.map((g) => ({ ...g })), d.guidelines);
+}
+const typeNote = (plan, src, client) => (client && client.mealPattern && src.pattern !== client.mealPattern
+  ? ` It uses “${DietRender.patternOf(src, store.settingsRO)?.label || "another type"}” for this plan; ${client.name}'s usual type stays “${store.settingsRO.mealPatterns[client.mealPattern]?.label || client.mealPattern}”.` : "");
+const mealCount = (t) => Object.values(t.meals || {}).reduce((n, m) => n + (m?.shared ? 1 : 0) + (m?.days || []).filter(Boolean).length, 0);
+export async function pickTemplate(exceptId) {
+  const list = [...(store.data.templates || [])].filter((t) => t.id !== exceptId).sort((a, b) => a.name.localeCompare(b.name));
+  if (!list.length) { toast("No templates yet. Make one under Meals → Templates."); return null; }
+  const id = await modal(String(html`<h2>Start from a template</h2>
+    <input type="search" id="tq" placeholder="Search templates" style="margin:10px 0">
+    <div class="list" id="tl" style="max-height:55vh;overflow:auto">${list.map((t) => html`
+      <button class="list-item" style="width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);cursor:pointer" data-close="${t.id}" data-name="${t.name.toLowerCase()}">
+        <div class="grow"><b>${t.name}</b><div class="small muted">${DietRender.patternOf(t, store.settingsRO)?.label || ""} · ${t.days} day${t.days > 1 ? "s" : ""} · ${mealCount(t)} meals filled</div></div></button>`)}</div>
+    <div class="actions"><button class="btn ghost" data-close="">Cancel</button></div>`), {
+    onMount(el) { el.querySelector("#tq").addEventListener("input", (e) => { const q = e.target.value.toLowerCase().trim(); el.querySelectorAll("#tl [data-name]").forEach((r) => (r.hidden = q && !r.dataset.name.includes(q))); }); },
+  });
+  return id ? store.template(id) : null;
+}
+
 // Choose any saved plan (this client's first, then others) to copy from.
 async function pickPlan(plans, clientId) {
   const s = store.settings;
@@ -73,17 +118,32 @@ async function pickPlan(plans, clientId) {
   return id ? store.plan(id) : null;
 }
 
-export default async function planEditor(ctx, planId, clientId) {
+// tplId: open the editor for a plan TEMPLATE ("new" or a template id) – same screen without client, dates, notes or call summary.
+export default async function planEditor(ctx, planId, clientId, tplId) {
+  const tpl = tplId !== undefined;
+  let existingTpl = tpl && tplId !== "new" ? store.template(tplId) : null;
+  if (tpl && tplId !== "new" && !existingTpl) { toast("That template was deleted"); ctx.goReplace("#/templates"); return; }
   let existing = planId ? store.plan(planId) : null;
   if (planId && !existing) { toast("That plan was deleted"); ctx.goReplace("#/clients"); return; }
-  const client = store.client(existing ? existing.clientId : clientId);
-  if (!client) { toast("That client was deleted"); ctx.goReplace("#/clients"); return; }
-  ctx.back(`#/client/${client.id}`);
+  const client = tpl ? null : store.client(existing ? existing.clientId : clientId);
+  if (!tpl && !client) { toast("That client was deleted"); ctx.goReplace("#/clients"); return; }
+  ctx.back(tpl ? "#/templates" : `#/client/${client.id}`);
 
   // If the user leaves (e.g. phone Back) while a question pop-up is open, don't navigate or draw afterwards.
   const myHash = location.hash, left = () => location.hash !== myHash;
   let plan;
-  if (existing) plan = structuredClone(existing);
+  if (tpl) {
+    if (existingTpl) plan = { ...structuredClone(existingTpl), startDate: todayIso() };
+    else {
+      const pattern = await askPattern({ name: "this template" }, true);
+      if (left()) return;
+      if (!pattern) { ctx.goReplace("#/templates"); return; }
+      const d = store.settings.defaults;
+      plan = { name: "", pattern, days: 7, startDate: todayIso(), slotModes: {}, slotTimes: {}, meals: {}, exercise: structuredClone(d.exercise),
+        servingSizes: structuredClone(d.servingSizes), guidelines: structuredClone(d.guidelines), recipeIds: [], pdfSections: { ...store.settings.pdfSections } };
+    }
+  }
+  else if (existing) plan = structuredClone(existing);
   else {
     const today = store.data.plans.find((p) => p.createdAt && toIso(new Date(p.createdAt)) === todayIso() && isSameClient(store.client(p.clientId), client));
     if (today) {
@@ -93,13 +153,33 @@ export default async function planEditor(ctx, planId, clientId) {
       if (r !== "new") { ctx.goReplace(`#/client/${client.id}`); return; }
     }
     let pattern = client.mealPattern;
-    if (!pattern) {
+    if (!pattern || !store.settingsRO.mealPatterns[pattern]) {   // not set yet, or that type was deleted: ask
       pattern = await askPattern(client);
       if (left()) return;
       if (!pattern) { ctx.goReplace(`#/client/${client.id}`); return; }
       client.mealPattern = pattern; await store.upsertClient(client);
     }
     plan = newPlanFor(client, pattern);
+    // How to start: blank, from a template or by copying another plan (asked only when there is something to use)
+    const hasT = (store.data.templates || []).length, hasP = store.data.plans.length;
+    while (hasT || hasP) {
+      const how = await modal(String(html`<h2>How do you want to start?</h2>
+        <div class="stack" style="margin-top:10px">
+          <button class="choice" data-close="blank"><span class="big">${icon("plus")}</span><span><b>Blank plan</b><span class="small muted">Start with empty meals</span></span></button>
+          ${hasT ? html`<button class="choice" data-close="tpl"><span class="big">${icon("book")}</span><span><b>From a template</b><span class="small muted">${hasT} saved template${hasT > 1 ? "s" : ""}</span></span></button>` : ""}
+          ${hasP ? html`<button class="choice" data-close="copy"><span class="big">${icon("copy")}</span><span><b>Copy another plan</b><span class="small muted">Any client's saved plan</span></span></button>` : ""}
+        </div>
+        <div class="actions"><button class="btn ghost" data-close="">Cancel</button></div>`));
+      if (left()) return;
+      if (!how) { ctx.goReplace(`#/client/${client.id}`); return; }
+      if (how === "blank") break;
+      const src = how === "tpl" ? await pickTemplate() : await pickPlan(store.data.plans, client.id);
+      if (left()) return;
+      if (!src) continue;   // cancelled the list: ask again
+      applySource(plan, src, how === "tpl");
+      toast((how === "tpl" ? `Started from “${src.name}”. Change what you need, then Save.` : "Copied. Dates and call summary were not copied.") + typeNote(plan, src, client), 4500);
+      break;
+    }
   }
   plan.slotModes ||= {}; plan.slotTimes ||= {}; plan.meals ||= {};
   // older or hand-edited plans may miss lists: fill them so the editor never breaks
@@ -108,10 +188,11 @@ export default async function planEditor(ctx, planId, clientId) {
   plan.days = Math.min(Math.max(+plan.days || 7, 1), 7);
   plan.pdfSections ||= { ...store.settings.pdfSections, ...(plan.callSummary && "includeInPdf" in plan.callSummary ? { callSummary: !!plan.callSummary.includeInPdf } : {}) };
   const otherPlans = () => store.data.plans.filter((p) => p.id !== plan.id);
+  let patternChosen = false;
   let dirty = !existing, mode = local.get("planView", matchMedia("(min-width: 900px)").matches ? "meal" : "day");
   store._editorDirty = dirty;
   const markDirty = () => { dirty = true; store._editorDirty = true; };
-  ctx.guard(async () => !dirty || confirmBox("Leave without saving?", "Your changes to this plan will be lost.", "Leave"));
+  ctx.guard(async () => !dirty || confirmBox("Leave without saving?", `Your changes to this ${tpl ? "template" : "plan"} will be lost.`, "Leave"));
   ctx.onCleanup(() => { store._editorDirty = false; });
 
   const dates = () => Array.from({ length: plan.days }, (_, i) => addDaysIso(plan.startDate, i));
@@ -126,10 +207,10 @@ export default async function planEditor(ctx, planId, clientId) {
   const slotIcon = (sl) => icon(sl.icon);
 
   function render() {
-    ctx.title(existing ? title() : "New plan");
+    ctx.title(tpl ? (existingTpl ? "Edit template" : "New template") : existing ? title() : "New plan");
     const ds = dates(), slots = planSlots(plan);
     const shared = slots.filter((x) => x.mode === "shared"), daily = slots.filter((x) => x.mode === "daily");
-    const dayLabel = (d) => `${wd(d)} ${fmtDate(d)}`;
+    const dayLabel = (d, i) => (tpl ? `Day ${i + 1}` : `${wd(d)} ${fmtDate(d)}`);
 
     const slotCard = (sl) => { const m = meal(sl.id); return html`
       <div class="card slot-card" style="--accent:${sl.accent}">
@@ -140,7 +221,7 @@ export default async function planEditor(ctx, planId, clientId) {
         </div>
         ${sl.mode === "shared" ? ta(`shared:${sl.id}`, m.shared, "Same for every day…")
           : html`<div class="day-grid" style="--cols:${Math.min(plan.days, 7)}">${ds.map((d, i) => html`
-              <div class="day-cell"><div class="day-lbl">${dayLabel(d)}</div>${ta(`day:${sl.id}:${i}`, m.days[i], "", 3)}</div>`)}</div>`}
+              <div class="day-cell"><div class="day-lbl">${dayLabel(d, i)}</div>${ta(`day:${sl.id}:${i}`, m.days[i], "", 3)}</div>`)}</div>`}
       </div>`; };
 
 
@@ -148,11 +229,11 @@ export default async function planEditor(ctx, planId, clientId) {
     const byDay = html`
       ${shared.length ? html`<div class="card"><h2>Same every day</h2><div class="stack">${shared.map((sl) => html`
         <div class="slot-line" style="--accent:${sl.accent}"><div class="row between"><span class="lbl">${sl.name}</span>
-          <span class="row" style="gap:6px"><input type="time" data-time="${sl.id}" value="${to24(sl.time)}" style="width:118px;min-height:34px;padding:4px 8px">
+          <span class="row" style="gap:6px"><input type="time" data-time="${sl.id}" value="${to24(sl.time)}" style="width:136px;min-height:34px;padding:4px 8px">
           <button type="button" class="btn small ghost" data-flip="${sl.id}" title="Make it different each day">Daily</button></span></div>
           ${ta(`shared:${sl.id}`, meal(sl.id).shared, "Same for every day…")}</div>`)}</div></div>` : ""}
       ${ds.map((d, i) => html`<div class="card day-card">
-        <div class="day-title"><h2>${wd(d)} <span class="muted small">${fmtDate(d)}</span></h2></div>
+        <div class="day-title"><h2>${tpl ? `Day ${i + 1}` : html`${wd(d)} <span class="muted small">${fmtDate(d)}</span>`}</h2></div>
         ${daily.map((sl) => html`<div class="slot-line" style="--accent:${sl.accent}"><div class="row between"><span class="lbl">${sl.name} <span class="muted tiny">${sl.time}</span></span>
           ${i === 0 ? html`<button type="button" class="btn small ghost" data-flip="${sl.id}" title="Use one meal for all days">Same all days</button>` : ""}</div>
           ${ta(`day:${sl.id}:${i}`, meal(sl.id).days[i], "")}</div>`)}
@@ -161,31 +242,35 @@ export default async function planEditor(ctx, planId, clientId) {
     ctx.view().innerHTML = String(html`
     <div class="card">
       <div class="row between wrap">
-        <div><div class="eyebrow">${client.name}</div><h2 style="margin:2px 0 0">${title()}</h2>
+        ${tpl ? html`<div style="flex:1 1 100%"><div class="eyebrow">Plan template</div>
+          <label class="field" style="margin-top:6px"><span>Template name</span><input type="text" id="tplName" value="${plan.name || ""}" placeholder="e.g. PCOD 1400 kcal – veg"></label></div>`
+        : html`<div><div class="eyebrow">${client.name}</div><h2 style="margin:2px 0 0">${title()}</h2>
           <div class="title-preview">${fmtDate(ds[0], { weekday: true })} – ${fmtDate(ds.at(-1), { weekday: true, year: true })}</div>
           ${(() => { const h = (store.client(client.id)?.program?.holds || []).find((x) => !(ds.at(-1) < x.from || ds[0] > x.to));
-            return h ? html`<div class="small" style="color:var(--amber);margin-top:4px">Note: overlaps a hold (${fmtDate(h.from)} – ${fmtDate(h.to)})</div>` : ""; })()}</div>
+            return h ? html`<div class="small" style="color:var(--amber);margin-top:4px">Note: overlaps a hold (${fmtDate(h.from)} – ${fmtDate(h.to)})</div>` : ""; })()}</div>`}
         <div class="seg" id="pattern">${Object.entries(s.mealPatterns).map(([k, p]) => html`<button type="button" data-v="${k}" class="${plan.pattern === k ? "on" : ""}">${p.label}</button>`)}
           ${s.mealPatterns[plan.pattern] ? "" : html`<button type="button" data-v="${plan.pattern}" class="on" title="This plan type was removed from Settings">${plan.patternSnapshot ? `${plan.patternSnapshot.label} (removed type, saved copy)` : `Removed type (shown as ${typeLabel(plan)})`}</button>`}</div>
       </div>
       <div class="form-grid" style="margin-top:14px">
-        <label class="field half"><span>Start date</span><input type="date" id="start" value="${plan.startDate}"></label>
-        <label class="field half" ${plan.days === 7 ? "" : "hidden"}><span>Week number</span><input type="number" id="week" min="1" value="${plan.weekNumber || ""}" inputmode="numeric"></label>
+        ${tpl ? "" : html`<label class="field half"><span>Start date</span><input type="date" id="start" value="${plan.startDate}"></label>`}
+        <label class="field half" ${plan.days === 7 && !tpl ? "" : "hidden"}><span>Week number</span><input type="number" id="week" min="1" value="${plan.weekNumber || ""}" inputmode="numeric"></label>
         <div class="full"><span class="field-label">Number of days</span>
           <div class="seg" id="days">${[1, 2, 3, 4, 5, 6, 7].map((n) => html`<button type="button" data-v="${n}" class="${plan.days === n ? "on" : ""}">${n}</button>`)}</div></div>
       </div>
-      ${otherPlans().length ? html`<div class="row wrap" style="margin-top:12px"><button type="button" class="btn small line" id="copyAny">${icon("copy")} Copy from another plan…</button></div>` : ""}
+      <div class="row wrap" style="margin-top:12px">
+        ${otherPlans().length ? html`<button type="button" class="btn small line" id="copyAny">${icon("copy")} Copy another plan…</button>` : ""}
+        ${(store.data.templates || []).filter((x) => x.id !== plan.id).length ? html`<button type="button" class="btn small line" id="fromTpl">${icon("book")} ${tpl ? "Copy a template…" : "From template…"}</button>` : ""}</div>
     </div>
 
-    <div class="section-title"><h2>Cover page</h2><span class="small muted">Tick what the PDF cover shows</span></div>
+    ${tpl ? "" : html`<div class="section-title"><h2>Cover page</h2><span class="small muted">Tick what the PDF cover shows</span></div>
     <div class="card"><div class="chips">
-      ${pdfTick("program", "Program dates")} ${pdfTick("statTiles", "Age, height, blood group, BMI")} ${pdfTick("weightProgress", "Weight progress & chart")}
-      ${pdfTick("measurements", "Body measurements")} ${pdfTick("health", "Health card")} ${pdfTick("food", "Food card")}</div></div>
+      ${pdfTick("clientId", "Client ID")} ${pdfTick("program", "Program dates")} ${pdfTick("statTiles", "Age, height, blood group, BMI")} ${pdfTick("weightProgress", "Weight progress & chart")}
+      ${pdfTick("measurements", "Body measurements")} ${pdfTick("health", "Health card")} ${pdfTick("food", "Food card")}</div></div>`}
 
     <div class="section-title"><h2>Meals</h2>
       <div class="seg" id="viewMode"><button type="button" data-v="day" class="${mode === "day" ? "on" : ""}">By day</button><button type="button" data-v="meal" class="${mode === "meal" ? "on" : ""}">By meal</button></div></div>
     ${mode === "meal" ? byMeal : byDay}
-    <label class="card weight-opt"><input type="checkbox" data-sec="weightRow" ${plan.pdfSections.weightRow !== false ? "checked" : ""}>
+    ${tpl ? html`<p class="small muted" style="margin:10px 2px 0">A template keeps only the meal plan. Exercise, serving guide, guidelines, recipes and PDF choices come from your Settings defaults when a client's plan is started from it, and can be changed there.</p>` : html`<label class="card weight-opt"><input type="checkbox" data-sec="weightRow" ${plan.pdfSections.weightRow !== false ? "checked" : ""}>
       <span><b>${icon("scale")} Show daily weight row in PDF</b><span class="small muted">Adds a "Weight" row at the bottom of the meal table with the weights logged on the client page for these dates. The PNG never shows weights.</span></span></label>
 
     <div class="section-title"><h2>Exercise</h2>${pdfTick("exercise")}<button type="button" class="btn small ghost" id="addEx">${icon("plus")} Add</button></div>
@@ -212,9 +297,9 @@ export default async function planEditor(ctx, planId, clientId) {
     <div class="card">${(plan.recipeIds || []).length ? html`<div class="chips">${plan.recipeIds.map((rid) => { const r = store.recipe(rid); return r ? html`
         <span class="chip on" style="cursor:default">${r.name} <button type="button" class="icon-btn" data-rmrecipe="${rid}" aria-label="Remove ${r.name}" style="width:24px;height:24px;margin:-4px -6px -4px 2px">${icon("x")}</button></span>` : ""; })}</div>
         <p class="tiny muted" style="margin:8px 0 0">Printed as recipe pages at the end of the plan PDF.</p>`
-      : html`<div class="empty small">No recipes added. ${store.data.recipes.length ? "Tap “Add” to choose from your recipes." : html`Create recipes under <a href="#/recipes">Meals → Recipes</a>.`}</div>`}</div>
+      : html`<div class="empty small">No recipes added. ${store.data.recipes.length ? "Tap “Add” to choose from your recipes." : html`Create recipes under <a href="#/recipes">Meals → Recipes</a>.`}</div>`}</div>`}
 
-    <div class="section-title"><h2>Call summary</h2>${pdfTick("callSummary")}</div>
+    ${tpl ? "" : html`<div class="section-title"><h2>Call summary</h2>${pdfTick("callSummary")}</div>
     <div class="card">
       <div class="form-grid">
         <label class="field half"><span>Call date</span><input type="date" id="csDate" value="${plan.callSummary?.date || todayIso()}"></label>
@@ -227,11 +312,12 @@ export default async function planEditor(ctx, planId, clientId) {
       <label class="inline-check" style="margin-top:12px"><input type="checkbox" id="remind" ${plan.reminder !== false ? "checked" : ""}>
         <span>Remind me ${s.reminders.planEndDaysBefore} day before this plan ends${calendarReady() ? " (Google Calendar)" : ""}</span></label>
       ${calendarReady() ? "" : html`<p class="tiny muted" style="margin:6px 0 0">Connect Google in Settings for phone alerts. Ending plans always show on the Today screen.</p>`}
-    </div>
+    </div>`}
 
     <div class="action-bar">
-      <button type="button" class="btn line" id="save">${icon("check")} Save</button>
-      <button type="button" class="btn teal" id="saveExport">${icon("download")} Save & export</button>
+      ${tpl ? html`<button type="button" class="btn teal" id="save">${icon("check")} Save template</button>`
+      : html`<button type="button" class="btn line" id="save">${icon("check")} Save</button>
+      <button type="button" class="btn teal" id="saveExport">${icon("download")} Save & export</button>`}
     </div>`);
 
     const v = ctx.view();
@@ -245,6 +331,7 @@ export default async function planEditor(ctx, planId, clientId) {
     const t = e.target, b = t.dataset.bind;
     if (t.dataset.time) { plan.slotTimes[t.dataset.time] = to12(t.value); markDirty(); return; }
     if (t.id === "week") { plan.weekNumber = +t.value || null; markDirty(); return; }
+    if (t.id === "tplName") { plan.name = t.value; markDirty(); return; }
     if (!b) return;
     markDirty();
     const [kind, a, c] = b.split(":");
@@ -272,6 +359,7 @@ export default async function planEditor(ctx, planId, clientId) {
     if (seg.id === "days") { plan.days = +b.dataset.v; markDirty(); return render(); }
     if (seg.id === "viewMode") { mode = b.dataset.v; local.set("planView", mode); return render(); }
     if (seg.id === "pattern" && b.dataset.v !== plan.pattern) {
+      patternChosen = true;
       plan.pattern = b.dataset.v; markDirty(); render();   // Daily / Same choices are kept per section
       return toast(`Switched to ${typeLabel(plan)}. Your entries are kept.`);
     }
@@ -295,16 +383,16 @@ export default async function planEditor(ctx, planId, clientId) {
       if ((x.value || x.label) && !(await confirmBox("Remove this serving size?", `“${[x.value, x.label].filter(Boolean).join(" = ")}” will be removed from this plan.`, "Remove"))) return;
       plan.servingSizes.splice(+b.dataset.delsv, 1); markDirty(); return render(); }
     if (b.id === "copyAny") {
-      const src = await pickPlan(otherPlans(), client.id);
+      const src = await pickPlan(otherPlans(), client?.id);
       if (!src) return;
-      const typed = Object.values(plan.meals || {}).some((m) => m && (m.shared || (m.days || []).some(Boolean)));
-      if (typed && !(await confirmBox("Replace what's here?", "The meals, exercise, serving sizes, guidelines and recipes on this screen will be replaced by the copied plan.", "Replace", false))) return;
-      plan.pattern = src.pattern; plan.days = src.days;
-      plan.meals = structuredClone(src.meals || {}); plan.slotModes = structuredClone(src.slotModes || {}); plan.slotTimes = structuredClone(src.slotTimes || {});
-      plan.exercise = structuredClone(src.exercise || []); plan.servingSizes = structuredClone(src.servingSizes || []); plan.guidelines = structuredClone(src.guidelines || []);
-      plan.recipeIds = [...(src.recipeIds || [])].filter((x) => store.recipe(x));
-      if (src.pdfSections) plan.pdfSections = { ...structuredClone(src.pdfSections), callSummary: plan.pdfSections.callSummary };
-      markDirty(); render(); return toast("Copied. Dates and call summary were not copied.");
+      if (hasContent(plan) && !(await confirmBox("Replace what's here?", "The meals, exercise, serving sizes, guidelines and recipes on this screen will be replaced by the copied plan.", "Replace", false))) return;
+      applySource(plan, src);
+      markDirty(); render(); return toast("Copied. Dates and call summary were not copied." + typeNote(plan, src, client), 4500);
+    }
+    if (b.id === "fromTpl") {
+      const src = await pickTemplate(plan.id); if (!src) return;
+      if (Object.values(plan.meals || {}).some((m) => m && (m.shared || (m.days || []).some(Boolean))) && !(await confirmBox("Replace the meals?", "The meals on this screen will be replaced by the template's meals. Exercise, guidelines and the rest stay as they are.", "Replace", false))) return;
+      applySource(plan, src, true); markDirty(); render(); return toast(`Template “${src.name}” applied.` + typeNote(plan, src, client), 4500);
     }
     if (b.id === "save" || b.id === "saveExport") {
       b.disabled = true;
@@ -313,7 +401,24 @@ export default async function planEditor(ctx, planId, clientId) {
     }
   };
 
+  async function saveTemplate() {
+    const name = String(plan.name || "").trim();
+    if (!name) { toast("Please enter the template name"); v.querySelector("#tplName")?.focus(); return null; }
+    if ((store.data.templates || []).some((x) => x.id !== plan.id && normText(x.name) === normText(name))) { toast("Another template has that name"); v.querySelector("#tplName")?.focus(); return null; }
+    if (!mealCount(plan)) { toast("Type some meals first"); return null; }
+    const t = templateFromPlan(structuredClone(plan), name);
+    if (existingTpl) { t.id = existingTpl.id; t.createdAt = existingTpl.createdAt; }
+    const learned = store.learnMeals(Object.values(plan.meals).flatMap((m) => [m.shared, ...(m.days || []).slice(0, plan.days)]).map((x) => (typeof x === "object" && x ? x.text : x)).filter(Boolean));
+    const saved = await store.upsertTemplate(t);
+    dirty = false; store._editorDirty = false;
+    plan = { ...plan, ...structuredClone(saved) };   // keep the editor's working fields
+    toast(`Template “${saved.name}” saved${learned ? ` · ${learned} new meal${learned > 1 ? "s" : ""} added to your list` : ""}`);
+    if (!existingTpl) { existingTpl = saved; ctx.replace(`#/template/${saved.id}`); }
+    render(); return saved;
+  }
+
   async function save() {
+    if (tpl) return saveTemplate();
     if (!plan.startDate) { toast("Pick a start date"); return null; }
     const dup = duplicateOf(plan, client);
     if (dup) {
@@ -330,7 +435,9 @@ export default async function planEditor(ctx, planId, clientId) {
     }
     const learned = store.learnMeals(texts.filter(Boolean));
     const fresh = store.client(client.id) || client;     // latest copy (another device may have added weights)
-    fresh.mealPattern = plan.pattern;
+    // the client's plan type follows the type you chose here – but never a type that no longer exists in Settings,
+    // and never just because a template/copied plan used another type
+    if (store.settingsRO.mealPatterns[plan.pattern] && (patternChosen || !fresh.mealPattern)) fresh.mealPattern = plan.pattern;
     await store.upsertClient(fresh);
     plan.exercise = plan.exercise.filter((x) => String(x.text || "").trim());
     plan.servingSizes = plan.servingSizes.filter((x) => String(x.value || "").trim() || String(x.label || "").trim());

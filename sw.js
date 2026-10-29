@@ -1,11 +1,11 @@
 // Offline support: app files are cached; data stays in IndexedDB / Google Drive.
-const CACHE = "nutriwise-v1.7.1";
+const CACHE = "nutriwise-v1.9.5";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/config.js", "js/defaults.js", "js/render.js", "js/app.js", "js/store.js", "js/ui.js", "js/model.js",
   "js/google.js", "js/sync.js", "js/export.js", "js/reminders.js",
   "js/views/dashboard.js", "js/views/clients.js", "js/views/client.js", "js/views/clientForm.js",
-  "js/views/plan.js", "js/views/library.js", "js/views/appointments.js", "js/views/settings.js", "js/views/exportDialog.js", "js/views/recipe.js",
+  "js/views/plan.js", "js/views/library.js", "js/views/appointments.js", "js/views/settings.js", "js/views/exportDialog.js", "js/views/recipe.js", "js/views/payments.js",
   "vendor/pdfmake.min.js", "vendor/pdf.min.js", "vendor/pdf.worker.min.js",
   "assets/logo.png", "assets/icons/icon-180.png", "assets/icons/icon-192.png", "assets/icons/icon-512.png", "assets/icons/maskable-512.png",
   "assets/fonts/poppins-full-400.woff", "assets/fonts/poppins-full-600.woff", "assets/fonts/sym-400.woff", "assets/fonts/sym-600.woff",

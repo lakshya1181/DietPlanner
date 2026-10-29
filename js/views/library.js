@@ -3,10 +3,11 @@ import { store, normText } from "../store.js";
 import { html, icon, toast, modal, confirmBox } from "../ui.js";
 import { openRecipeExport } from "./exportDialog.js";
 
-const tabs = (on) => html`<div class="seg" style="margin-bottom:12px"><a class="seg-a ${on === "meals" ? "on" : ""}" href="#/library">Meal list</a><a class="seg-a ${on === "recipes" ? "on" : ""}" href="#/recipes">Recipes</a></div>`;
+const tabs = (on) => html`<div class="seg" style="margin-bottom:12px"><a class="seg-a ${on === "meals" ? "on" : ""}" href="#/library">Meal list</a><a class="seg-a ${on === "recipes" ? "on" : ""}" href="#/recipes">Recipes</a><a class="seg-a ${on === "templates" ? "on" : ""}" href="#/templates">Templates</a></div>`;
 
 export default function library(ctx, tab) {
   if (tab === "recipes") return recipesList(ctx);
+  if (tab === "templates") return templatesList(ctx);
   ctx.title("Meal list");
   let q = "", sort = "uses";
   const v = ctx.view();
@@ -47,7 +48,7 @@ export default function library(ctx, tab) {
     const b = e.target.closest("button"); if (!b) return;
     if (b.id === "add") return edit(null);
     if (b.dataset.edit) return edit(store.data.library.find((m) => m.id === b.dataset.edit));
-    if (b.dataset.del && (await confirmBox("Delete meal?", "It will no longer be suggested. Existing plans are not changed."))) { await store.deleteMeal(b.dataset.del); draw(); }
+    if (b.dataset.del && (await confirmBox("Delete meal?", "It will no longer be suggested. Existing plans are not changed. It goes to the Recycle bin (Settings) for 30 days."))) { await store.deleteMeal(b.dataset.del); draw(); }
   });
   draw();
 }
@@ -87,6 +88,45 @@ function recipesList(ctx) {
     if (b.dataset.pdf) return openRecipeExport([store.recipe(b.dataset.pdf)]);
     if (b.id === "clearPick") { picked.clear(); return draw(); }
     if (b.id === "pdfPick") return openRecipeExport([...picked].map((id) => store.recipe(id)).filter(Boolean));
+  });
+  draw();
+}
+
+
+// ---------- plan templates ----------
+function templatesList(ctx) {
+  ctx.title("Plan templates");
+  let q = "";
+  const v = ctx.view();
+  v.innerHTML = String(html`${tabs("templates")}
+    <p class="small muted" style="margin:0 2px 12px">Ready-made plans you can start a client's plan from (“From a template” when creating a plan). Tap a template to change its name or meals.</p>
+    <div class="row" style="margin-bottom:12px"><input type="search" id="q" placeholder="Search templates" class="grow"></div>
+    <div class="card"><div class="list" id="list"></div></div>
+    <a class="btn fab" href="#/template/new" id="fabTpl">${icon("plus")} New template</a>`);
+  const s = store.settingsRO;
+  const preview = (t) => { const pat = DietRender.patternOf(t, s); if (!pat) return "";
+    return pat.slots.map((sl) => { const m = (t.meals || {})[sl.id] || {}, mode = (t.slotModes || {})[sl.id] || sl.mode;
+      const txt = mode === "shared" ? m.shared : (m.days || []).slice(0, t.days).filter(Boolean).map((x) => (typeof x === "object" ? x.text : x)).join(" / ");
+      return txt ? `${DietRender.slotInfo(sl.id, t, s).name}: ${txt}` : ""; }).filter(Boolean); };
+  const draw = () => {
+    const n = normText(q);
+    const rows = [...(store.data.templates || [])].filter((t) => !n || normText(t.name).includes(n)).sort((a, b) => a.name.localeCompare(b.name));
+    v.querySelector("#list").innerHTML = rows.length ? String(html`${rows.map((t) => html`
+      <div class="list-item" style="align-items:flex-start"><div class="grow"><a href="#/template/${t.id}" style="color:inherit;text-decoration:none"><b>${t.name}</b></a>
+        <div class="small muted">${DietRender.patternOf(t, s)?.label || ""} · ${t.days} day${t.days > 1 ? "s" : ""}</div>
+        <details class="more" style="margin-top:4px"><summary class="small">Meals</summary><ul class="small" style="margin:6px 0 0;padding-left:18px">${preview(t).map((x) => html`<li>${x}</li>`)}</ul></details></div>
+        <a class="icon-btn" href="#/template/${t.id}" data-edit-tpl="${t.id}" aria-label="Edit">${icon("edit")}</a>
+        <button class="icon-btn danger" data-del="${t.id}" aria-label="Delete">${icon("trash")}</button></div>`)}`)
+      : String(html`<div class="empty">${icon("book")}<div>${(store.data.templates || []).length ? "No templates match." : "No templates yet. Tap “New template” to make one."}</div></div>`);
+  };
+  v.querySelector("#q").addEventListener("input", (e) => { q = e.target.value; draw(); });
+  v.addEventListener("click", async (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.del) {
+      const t = store.template(b.dataset.del);
+      if (!(await confirmBox("Delete template?", `“${t.name}” will be removed. Plans made from it are not changed. It goes to the Recycle bin (Settings) for 30 days.`))) return;
+      await store.deleteTemplate(t.id); toast("Template deleted"); return draw();
+    }
   });
   draw();
 }

@@ -15,9 +15,10 @@ export default function clientForm(ctx, id) {
   const s = store.settings;
   const existing = id ? store.client(id) : null;
   if (id && !existing) { toast("That client was deleted"); ctx.goReplace("#/clients"); return; }
-  const c = existing ? structuredClone(existing) : { name: "", phone: "", age: "", sex: "Female", heightFt: 5, heightIn: 0, bloodGroup: "",
+  const c = existing ? { healthFlags: [], healthLevels: {}, ...structuredClone(existing) } : { name: "", phone: "", age: "", sex: "Female", heightFt: 5, heightIn: 0, bloodGroup: "",
     foodPreference: s.foodPreferences[0].label, likes: "", dislikes: "", allergies: "", medical: "", healthFlags: [], healthLevels: {}, foodNotes: "",
     water: s.defaults.water, mealPattern: "", weightLog: [], measurementLog: [] };
+  if (!Array.isArray(c.healthFlags)) c.healthFlags = []; if (!c.healthLevels || typeof c.healthLevels !== "object") c.healthLevels = {};
   const m = clientMetrics(c);
   ctx.title(existing ? `Edit client · ${existing.code || ""}` : "New client");
   ctx.back(existing ? `#/client/${id}` : "#/clients");
@@ -132,7 +133,7 @@ export default function clientForm(ctx, id) {
     if (lv) { c.healthFlags.push(f); if (lv !== "yes") c.healthLevels[f] = lv; } else delete c.healthLevels[f];
   });
   v.querySelector("#del")?.addEventListener("click", async () => {
-    if (!(await confirmBox("Delete client?", `This deletes ${c.name}, all their plans and appointments. This cannot be undone.`))) return;
+    if (!(await confirmBox("Delete client?", `This deletes ${c.name}, all their plans and appointments. They go to the Recycle bin (Settings) for 30 days, where you can restore them.`))) return;
     // remove this client's calendar reminders too (queued if Google isn't connected right now)
     const ids = [...store.plansFor(c.id).map((p) => p.reminderEventId), ...store.data.appointments.filter((x) => x.clientId === c.id).map((x) => x.eventId)].filter(Boolean);
     for (const id of ids) { try { await removeReminder(id); } catch {} }

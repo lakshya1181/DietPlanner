@@ -139,6 +139,22 @@ export async function buildRecipeFile(recipes, client, settings = store.settings
   return new File([buf], safeName(DietRender.recipeFileName(recipes, client)) + ".pdf", { type: "application/pdf" });
 }
 
+/** Payment receipt PDF. r = { client, payment, packageName, fee, paidTotal, due } */
+export async function buildReceiptFile(r, settings = store.settings) {
+  await ensureFonts();
+  const images = await brandImages(settings);
+  const buf = await pdfBuffer(DietRender.buildReceiptDoc(r, settings, images));
+  return new File([buf], safeName(`Receipt ${r.payment.receiptNo || ""} - ${r.client.name}`) + ".pdf", { type: "application/pdf" });
+}
+
+/** Invoice PDF (payment request). */
+export async function buildInvoiceFile(r, settings = store.settings) {
+  await ensureFonts();
+  const images = await brandImages(settings);
+  const buf = await pdfBuffer(DietRender.buildInvoiceDoc(r, settings, images));
+  return new File([buf], safeName(`Invoice ${r.invoiceNo} - ${r.client.name}`) + ".pdf", { type: "application/pdf" });
+}
+
 export const canShareFiles = (files) => !!(navigator.canShare && navigator.canShare({ files }));
 export async function shareFiles(files, title) { await navigator.share({ files, title }); }
 export function downloadFiles(files) {
