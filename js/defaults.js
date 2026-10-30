@@ -1,6 +1,6 @@
 // Default settings. Your edits in Settings are stored separately and override these.
 // App version – shown in Settings. Lives here (not in config.js) because config.js is never re-uploaded.
-export const APP_VERSION = "1.9.9";
+export const APP_VERSION = "1.9.10";
 
 export const DEFAULT_SETTINGS = {
   "branding": {
