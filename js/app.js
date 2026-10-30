@@ -1,6 +1,6 @@
 // App shell: router, navigation, sync banner, install button, service worker.
 import { store, local } from "./store.js";
-import { $, html, icon, modal, toast, closeAllModals, modalsDirty, anyModalOpen, confirmBox } from "./ui.js";
+import { $, html, icon, modal, toast, closeAllModals, modalsDirty, anyModalOpen, confirmBox, resetLists } from "./ui.js";
 import * as sync from "./sync.js";
 import * as G from "./google.js";
 import dashboard from "./views/dashboard.js";
@@ -93,6 +93,7 @@ async function route(force) {
   leaveGuard = null; cleanup?.(); cleanup = null;
   closeAllModals();   // e.g. phone Back button while a dialog is open
   if ($("#updateBanner").textContent.includes("Newer data")) $("#updateBanner").innerHTML = "";
+  if (h !== lastHash) resetLists();   // long lists start short again on every new page
   lastHash = h;
   renderNav();
   ctx.back(null); ctx.actions("");

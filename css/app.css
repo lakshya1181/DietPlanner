@@ -302,3 +302,6 @@ details.ptype > summary::-webkit-details-marker { display: none; }
 /* meal times: wide enough for "06:30 AM" on every screen */
 .slot-head input[type=time] { width: 136px; }
 input[type=time][data-time] { min-width: 132px; }
+/* long lists: Show older · Show all */
+.more-bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 12px 0 2px; }
+.more-bar .btn { flex: 0 1 auto; }

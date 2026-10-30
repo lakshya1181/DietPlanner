@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS = {
   },
   "output": {
     "showLinks": false,
-    "chartMaxPoints": 12
+    "chartMaxPoints": 20
   },
   "theme": {
     "font": "Poppins",

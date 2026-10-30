@@ -169,7 +169,7 @@ export default function settingsView(ctx) {
         <div class="form-grid">
           <label class="field half"><span>Plan-ending reminder: days before</span><input type="number" min="0" max="7" data-num="reminders.planEndDaysBefore" value="${st.reminders.planEndDaysBefore}"></label>
           <label class="field half"><span>Reminder time</span><input type="time" data-path="reminders.planEndTime" value="${st.reminders.planEndTime}"></label>
-          <label class="field half"><span>Weight chart: last N weigh-ins</span><input type="number" min="3" max="60" data-num="output.chartMaxPoints" value="${st.output.chartMaxPoints}"></label>
+          <label class="field half"><span>Weight chart: maximum points (start and latest always shown)</span><input type="number" min="6" max="60" data-num="output.chartMaxPoints" value="${st.output.chartMaxPoints}"></label>
         </div></div></div>
 
     <div class="card"><h2>Data</h2>

@@ -99,6 +99,8 @@ export const store = {
     const d = this.data;
     d.clients ||= []; d.plans ||= []; d.library ||= []; d.appointments ||= []; d.pendingEventDeletes ||= []; d.recipes ||= []; d.trash ||= []; d.templates ||= [];
     this.purgeTrash();
+    // the weight chart used to show "the last 12"; it now shows the whole history thinned to a maximum (default 20)
+    if (d.settings?.output && +d.settings.output.chartMaxPoints === 12 && !d.settings.output.chartV2) { d.settings.output.chartMaxPoints = 20; d.settings.output.chartV2 = true; }
     // records from old or hand-edited files may miss lists: fill them so no screen breaks
     const A = (v) => (Array.isArray(v) ? v : []), O = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
     for (const c of d.clients) {

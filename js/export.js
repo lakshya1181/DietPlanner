@@ -156,7 +156,9 @@ export async function buildInvoiceFile(r, settings = store.settings) {
 }
 
 export const canShareFiles = (files) => !!(navigator.canShare && navigator.canShare({ files }));
-export async function shareFiles(files, title) { await navigator.share({ files, title }); }
+// Files only – no title or text. WhatsApp / WhatsApp Business reject a share whose text part is empty or only a
+// title ("Can't share empty message") and often refuse a PDF + PNG mix, so the app shares one file per tap.
+export async function shareFiles(files) { await navigator.share({ files }); }
 export function downloadFiles(files) {
   files.forEach((f, i) => setTimeout(() => {
     const a = document.createElement("a");

@@ -1,6 +1,6 @@
 // Client profile: progress, weight & measurement logs, plans, appointments.
 import { store, todayIso, uid } from "../store.js";
-import { html, raw, icon, toast, confirmBox, modal, addDaysIso, daysBetween, fmtDate, to12, initials, avatarColor, weightChartSvg } from "../ui.js";
+import { html, raw, icon, toast, confirmBox, modal, addDaysIso, daysBetween, fmtDate, to12, initials, avatarColor, weightChartSvg, moreList, keepOpen } from "../ui.js";
 import { clientMetrics, clientStatus, planEnd, renderablePlan, typeLabel, programOf } from "../model.js";
 import { openExport } from "./exportDialog.js";
 import { appointmentModal } from "./appointments.js";
@@ -55,6 +55,9 @@ export default function clientView(ctx, id) {
     const notes = [...(c.privateNotes || [])].sort((a, b) => b.date.localeCompare(a.date) || (b.at || "").localeCompare(a.at || ""));
     const mlog = [...(c.measurementLog || [])].sort((a, b) => b.date.localeCompare(a.date));
     const sites = s.measurements.sites, unit = s.measurements.unit;
+    // long histories: newest first, a few at a time (Show older · Show all)
+    const wRev = [...m.log].reverse(), wl = moreList("weights", wRev, 10, 20, draw), ml = moreList("measures", mlog, 5, 10, draw),
+      nl = moreList("notes", notes, 5, 10, draw), pl = moreList("plans", plans, 10, 10, draw);
     const pref = s.foodPreferences.find((p) => p.label === c.foodPreference);
     const wa = c.phone ? waLink(c.phone, `Hi ${c.name.split(" ")[0]}, `, c.phoneCode) : null;
 
@@ -89,35 +92,35 @@ export default function clientView(ctx, id) {
           <div class="v" style="color:${m.lost > 0 ? "var(--green)" : m.lost < 0 ? "var(--amber)" : ""}">${m.lost == null ? "–" : Math.abs(m.lost)}<small> kg</small></div><div class="s">since start</div></div>
       </div>
       <div class="chart-wrap" style="margin-top:14px">${raw(weightChartSvg(m.log))}</div>
-      ${m.log.length ? html`<details class="more" style="margin-top:8px"><summary>Weight history (${m.log.length})</summary>
+      ${m.log.length ? html`<details class="more" data-keep="weights" ${keepOpen("weights")} style="margin-top:8px"><summary>Weight history (${m.log.length})</summary>
         <div class="table-scroll"><table class="simple"><tr><th>Date</th><th>Weight</th><th>Change</th><th></th></tr>
-        ${[...m.log].reverse().map((w, i, arr) => { const prev = arr[i + 1]; const d = prev ? +(w.kg - prev.kg).toFixed(1) : null;
+        ${wl.items.map((w, i) => { const prev = wRev[i + 1]; const d = prev ? +(w.kg - prev.kg).toFixed(1) : null;
           return html`<tr><td>${fmtDate(w.date, { weekday: true })}</td><td><b>${w.kg} kg</b></td>
             <td class="${d < 0 ? "down" : d > 0 ? "up" : ""}">${d == null ? "" : (d > 0 ? "+" : "") + d}</td>
             <td style="text-align:right"><button class="icon-btn danger" data-delw="${w.date}" aria-label="Delete">${icon("trash")}</button></td></tr>`; })}
-        </table></div></details>` : ""}
+        </table></div>${wl.bar}</details>` : ""}
     </div>
 
     <div class="card">
       <div class="card-head"><h2>Body measurements <span class="small muted">(${unit === "in" ? "inches" : unit})</span></h2><button class="btn small ghost" id="addM">${icon("ruler")} Add</button></div>
       ${mlog.length ? html`<div class="table-scroll"><table class="simple">
         <tr><th>Date</th>${sites.map((x) => html`<th>${x.label}</th>`)}<th></th></tr>
-        ${mlog.map((r) => html`<tr><td>${fmtDate(r.date)}</td>${sites.map((x) => html`<td>${r[x.key] ?? "–"}</td>`)}
+        ${ml.items.map((r) => html`<tr><td>${fmtDate(r.date)}</td>${sites.map((x) => html`<td>${r[x.key] ?? "–"}</td>`)}
           <td><button class="icon-btn danger" data-delm="${r.date}" aria-label="Delete">${icon("trash")}</button></td></tr>`)}
       </table></div>
-      <div class="m-cards">${mlog.map((r) => html`<div class="m-card"><div class="row between"><b>${fmtDate(r.date, { year: true })}</b>
+      <div class="m-cards">${ml.items.map((r) => html`<div class="m-card"><div class="row between"><b>${fmtDate(r.date, { year: true })}</b>
           <button class="icon-btn danger" data-delm="${r.date}" aria-label="Delete">${icon("trash")}</button></div>
-        <div class="m-grid">${sites.map((x) => html`<div><span class="tiny muted">${x.label}</span><b>${r[x.key] ?? "–"}</b></div>`)}</div></div>`)}</div>` : html`<div class="empty small">No measurements yet.</div>`}
+        <div class="m-grid">${sites.map((x) => html`<div><span class="tiny muted">${x.label}</span><b>${r[x.key] ?? "–"}</b></div>`)}</div></div>`)}</div>${ml.bar}` : html`<div class="empty small">No measurements yet.</div>`}
     </div>
 
     <div class="card" style="border:1.5px dashed var(--line);box-shadow:none">
       <div class="card-head"><h2>Private notes <span class="small muted">· only you see these</span></h2><button class="btn small ghost" id="addN">${icon("plus")} Add</button></div>
-      ${notes.length ? html`<div class="list">${notes.map((n) => html`
+      ${notes.length ? html`<div class="list">${nl.items.map((n) => html`
         <div class="list-item" style="align-items:flex-start"><div class="grow">
           <div class="tiny muted" style="font-weight:600">${fmtDate(n.date, { weekday: true, year: true })}</div>
           <div style="white-space:pre-wrap">${n.text}</div></div>
           <button class="icon-btn" data-editn="${n.id}" aria-label="Edit note">${icon("edit")}</button>
-          <button class="icon-btn danger" data-deln="${n.id}" aria-label="Delete note">${icon("trash")}</button></div>`)}</div>`
+          <button class="icon-btn danger" data-deln="${n.id}" aria-label="Delete note">${icon("trash")}</button></div>`)}</div>${nl.bar}`
       : html`<div class="empty small">No notes yet. Notes never appear in PDFs or images.</div>`}
     </div>
 
@@ -136,14 +139,14 @@ export default function clientView(ctx, id) {
 
     <div class="card">
       <div class="card-head"><h2>Plans</h2><a class="btn small ghost" href="#/plan/new/${id}">${icon("plus")} New</a></div>
-      ${plans.length ? html`<div class="list">${plans.map((p) => html`
+      ${plans.length ? html`<div class="list">${pl.items.map((p) => html`
         <div class="list-item">
           <a class="grow" href="#/plan/${p.id}" style="text-decoration:none;color:inherit">
             <b>${p.days === 7 && p.weekNumber ? `Week ${p.weekNumber}` : `${p.days}-Day Plan`}</b>
             <div class="small muted">${fmtDate(p.startDate)} – ${fmtDate(planEnd(p), { year: true })} · ${typeLabel(p)}</div></a>
           <button class="icon-btn" data-exp="${p.id}" aria-label="Export">${icon("download")}</button>
           <button class="icon-btn danger" data-delp="${p.id}" aria-label="Delete plan">${icon("trash")}</button>
-        </div>`)}</div>` : html`<div class="empty small">No plans yet.</div>`}
+        </div>`)}</div>${pl.bar}` : html`<div class="empty small">No plans yet.</div>`}
     </div>
 
     <div class="card">

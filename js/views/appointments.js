@@ -1,6 +1,6 @@
 // Appointments + reminders (Google Calendar when connected, otherwise .ics file), WhatsApp reminder.
 import { store, todayIso } from "../store.js";
-import { html, icon, toast, modal, confirmBox, fmtDate, to12, initials, avatarColor } from "../ui.js";
+import { html, icon, toast, modal, confirmBox, fmtDate, to12, initials, avatarColor, moreList } from "../ui.js";
 import { calendarReady, pushReminder, removeReminder, appointmentReminder, icsFile, waLink, appointmentMessage } from "../reminders.js";
 import { downloadFiles } from "../export.js";
 
@@ -62,8 +62,9 @@ export default function appointments(ctx) {
     const t = todayIso();
     const list = store.data.appointments.filter((a) => (showPast ? a.date < t : a.date >= t))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time) * (showPast ? -1 : 1));
+    const pl = showPast ? moreList("pastAppts", list, 20, 20, draw) : { items: list, bar: "" };   // past ones grow forever: newest first, 20 at a time
     const groups = {};
-    list.forEach((a) => (groups[a.date] ||= []).push(a));
+    pl.items.forEach((a) => (groups[a.date] ||= []).push(a));
     v.innerHTML = String(html`
       <div class="seg" id="tab" style="margin-bottom:12px"><button data-v="up" class="${showPast ? "" : "on"}">Upcoming</button><button data-v="past" class="${showPast ? "on" : ""}">Past</button></div>
       ${!store.data.clients.length ? html`<div class="card empty">Add a client first, then book appointments.</div>`
@@ -79,6 +80,7 @@ export default function appointments(ctx) {
             <button class="icon-btn" data-edit="${a.id}" aria-label="Edit">${icon("edit")}</button>
           </div>`; })}</div></div>`)
         : html`<div class="card empty">${icon("calendar")}<div>${showPast ? "No past appointments." : "No upcoming appointments."}</div></div>`}
+      ${pl.bar}
       ${store.data.clients.length ? html`<button class="btn fab" id="add">${icon("plus")} Appointment</button>` : ""}`);
   };
   v.addEventListener("click", async (e) => {

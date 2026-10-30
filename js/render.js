@@ -150,30 +150,66 @@
     return runs;
   }
 
-  // ---------- weight chart (SVG, no text inside; labels laid out by pdfmake) ----------
+  // ---------- weight chart (shared by the PDF and the app screen) ----------
+  // Whole history, dots at their real dates. More than `max` weigh-ins → thinned to `max` points spread evenly in
+  // time; the first, the latest, the lowest and the highest are always kept. Scale and date labels adapt to the span.
+  const dayNo = (iso) => Math.round(parseDate(iso).getTime() / 864e5);
+  const isoDay = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+  function thinWeights(log, max) {
+    if (log.length <= max) return log.slice();
+    const keep = new Set([0, log.length - 1]);
+    let mi = 0, ma = 0; log.forEach((p, i) => { if (p.kg < log[mi].kg) mi = i; if (p.kg > log[ma].kg) ma = i; }); keep.add(mi); keep.add(ma);
+    const a = dayNo(log[0].date), b = dayNo(log.at(-1).date), slots = Math.max(0, max - keep.size);
+    for (let k = 1; k <= slots; k++) {
+      const target = a + ((b - a) * k) / (slots + 1); let best = -1, bd = Infinity;
+      log.forEach((p, i) => { const d = Math.abs(dayNo(p.date) - target); if (!keep.has(i) && d < bd) { bd = d; best = i; } });
+      if (best >= 0) keep.add(best);
+    }
+    return [...keep].sort((x, y) => x - y).map((i) => log[i]);
+  }
+  // o = { w, h, max, font, sizes:{tick,label}, colors:{line,muted,grid,last,first}, dot:{r,last,first}, labelPx }
+  function weightChartSvgText(rawLog, o) {
+    const log = (rawLog || []).filter((p) => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && +p.kg > 0).map((p) => ({ date: p.date, kg: +p.kg }))
+      .sort((x, y) => x.date.localeCompare(y.date));
+    if (log.length < 2) return null;
+    const pts = thinWeights(log, Math.max(6, Math.min(60, +o.max || 20)));
+    const { w: W, h: H } = o, L = o.left ?? 34, R = o.right ?? 10, T = o.top ?? 10, B = o.bottom ?? 22, c = o.colors, fs = o.sizes || { tick: 10, label: 10 };
+    const a = dayNo(pts[0].date), b = dayNo(pts.at(-1).date), span = Math.max(1, b - a);
+    const v = pts.map((p) => p.kg), range = Math.max(...v) - Math.min(...v) + 1;
+    const step = [0.5, 1, 2, 5, 10, 20].find((x) => range / x <= 5) || 20;
+    const lo = Math.floor((Math.min(...v) - 0.3) / step) * step, hi = Math.ceil((Math.max(...v) + 0.3) / step) * step;
+    const X = (iso) => L + ((W - L - R) * (dayNo(iso) - a)) / span, Y = (k) => T + (H - T - B) * (1 - (k - lo) / (hi - lo));
+    const font = o.font ? ` font-family="${o.font}"` : "";
+    let out = "";
+    for (let k = lo; k <= hi + 1e-9; k += step) out += `<line x1="${L}" x2="${W - R}" y1="${Y(k).toFixed(1)}" y2="${Y(k).toFixed(1)}" stroke="${c.grid}" stroke-width="0.8"/>` +
+      `<text x="${L - 5}" y="${(Y(k) + fs.tick * 0.35).toFixed(1)}" font-size="${fs.tick}" text-anchor="end" fill="${c.muted}"${font}>${+k.toFixed(1)}</text>`;
+    // date labels: weekly / fortnightly / monthly / two-monthly, never crowding the first and last
+    const long = span > 300, yy = (iso) => " '" + iso.slice(2, 4);   // > ~10 months: add the year so "1 Apr" is never ambiguous
+    const lab = (iso) => dm(parseDate(iso)) + (long ? yy(iso) : ""), cand = [];
+    const every = span <= 35 ? 7 : span <= 63 ? 14 : null;
+    if (every) for (let d = a + every; d < b; d += every) cand.push(isoDay(d));
+    else { const s0 = parseDate(pts[0].date), gap = span > 540 ? 6 : span > 300 ? 3 : span > 150 ? 2 : 1;
+      for (let i = 1; ; i++) { const d = new Date(Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth() + i, 1)); const iso = d.toISOString().slice(0, 10); if (dayNo(iso) >= b) break; if ((i - 1) % gap === 0) cand.push(iso); } }
+    const minGap = o.labelPx || 50, first = pts[0].date, last = pts.at(-1).date;
+    const mids = cand.filter((iso) => X(iso) - X(first) > minGap && X(last) - X(iso) > minGap);
+    const tick = (iso, anchor) => `<line x1="${X(iso).toFixed(1)}" x2="${X(iso).toFixed(1)}" y1="${H - B}" y2="${H - B + 3}" stroke="${c.muted}" stroke-width="0.6"/>` +
+      `<text x="${X(iso).toFixed(1)}" y="${H - B + 4 + fs.label}" font-size="${fs.label}" text-anchor="${anchor}" fill="${c.muted}"${font}>${lab(iso)}</text>`;
+    out += tick(first, "start") + mids.map((iso) => tick(iso, "middle")).join("") + tick(last, "end");
+    const line = pts.map((p) => `${X(p.date).toFixed(1)},${Y(p.kg).toFixed(1)}`).join(" ");
+    out += `<polygon points="${X(first).toFixed(1)},${H - B} ${line} ${X(last).toFixed(1)},${H - B}" fill="${c.line}" fill-opacity="0.12"/>`;
+    out += `<line x1="${L}" x2="${W - R}" y1="${Y(log[0].kg).toFixed(1)}" y2="${Y(log[0].kg).toFixed(1)}" stroke="${c.muted}" stroke-width="0.8" stroke-dasharray="3,3"/>`;
+    out += `<polyline points="${line}" fill="none" stroke="${c.line}" stroke-width="${o.stroke || 2}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const r = o.dot || { r: 2.2, first: 3, last: 3.6 };
+    out += pts.map((p, i) => { const isL = i === pts.length - 1, isF = i === 0;
+      return `<circle cx="${X(p.date).toFixed(1)}" cy="${Y(p.kg).toFixed(1)}" r="${isL ? r.last : isF ? r.first : r.r}" fill="${isL ? c.last : isF ? c.first : c.line}" stroke="#ffffff" stroke-width="1">${o.titles ? `<title>${lab(p.date)}: ${p.kg} kg</title>` : ""}</circle>`; }).join("");
+    return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${out}</svg>`, points: pts.length, total: log.length };
+  }
   function weightChart(log, settings, w, h) {
     const t = settings.theme;
-    const pts = log.slice(-settings.output.chartMaxPoints);
-    if (pts.length < 2) return { text: "Chart appears after 2 weigh-ins.", fontSize: 8.5, color: t.muted, italics: true, margin: [0, 30, 0, 0] };
-    const vals = pts.map((p) => p.kg), startKg = log[0].kg;   // dashed line = the true starting weight (same as the Starting box)
-    const lo = Math.floor(Math.min(...vals, startKg) - 0.5), hi = Math.ceil(Math.max(...vals, startKg) + 0.5);
-    const px = 6, py = 8, iw = w - px * 2, ih = h - py * 2;
-    const X = (i) => px + (iw * i) / (pts.length - 1), Y = (v) => py + ih * (1 - (v - lo) / (hi - lo));
-    const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.kg).toFixed(1)}`).join(" ");
-    const area = `${px},${py + ih} ${line} ${X(pts.length - 1).toFixed(1)},${py + ih}`;
-    const grid = [0, 0.5, 1].map((f) => `<line x1="${px}" x2="${px + iw}" y1="${py + ih * f}" y2="${py + ih * f}" stroke="#E3E8EE" stroke-width="0.8"/>`).join("");
-    const base = `<line x1="${px}" x2="${px + iw}" y1="${Y(startKg)}" y2="${Y(startKg)}" stroke="${t.muted}" stroke-width="0.8" stroke-dasharray="3,3"/>`;
-    const dots = pts.map((p, i) => `<circle cx="${X(i)}" cy="${Y(p.kg)}" r="${i === pts.length - 1 ? 3.6 : 2.2}" fill="${i === pts.length - 1 ? t.coral : t.teal}" stroke="#fff" stroke-width="1"/>`).join("");
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${grid}` +
-      `<polygon points="${area}" fill="${t.teal}" fill-opacity="0.12"/>${base}` +
-      `<polyline points="${line}" fill="none" stroke="${t.teal}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}</svg>`;
-    const lbl = (s, extra) => ({ text: s, fontSize: 7, color: t.muted, ...extra });
-    return { stack: [
-      { columns: [
-        { width: 26, stack: [lbl(`${hi}`, { margin: [0, py - 4, 0, 0] }), lbl(`${(lo + hi) / 2}`, { margin: [0, ih / 2 - 13, 0, 0] }), lbl(`${lo}`, { margin: [0, ih / 2 - 13, 0, 0] })] },
-        { svg, width: w, height: h }] },
-      { columns: [{ width: 26, text: "" }, lbl(dm(parseDate(pts[0].date))), lbl(dm(parseDate(pts.at(-1).date)), { alignment: "right" })], margin: [0, 2, 0, 0] },
-    ] };
+    const r = weightChartSvgText(log, { w: w + 26, h: h + 16, max: settings.output.chartMaxPoints || 20, font: t.font, sizes: { tick: 7, label: 7 }, left: 26, bottom: 16, top: 6, right: 4, labelPx: 34,
+      colors: { line: t.teal, muted: t.muted, grid: "#E3E8EE", last: t.coral, first: t.navy }, dot: { r: 2, first: 2.8, last: 3.4 }, stroke: 1.8 });
+    if (!r) return { text: "Chart appears after 2 weigh-ins.", fontSize: 8.5, color: t.muted, italics: true, margin: [0, 30, 0, 0] };
+    return { svg: r.svg, width: w + 26, height: h + 16 };
   }
 
   // ---------- decorations ----------
@@ -792,7 +828,7 @@
     return doc;
   }
 
-  const api = { buildInvoiceDoc, inr, amountInWords, buildReceiptDoc, recipeHasContent, buildCoverFitDoc, recipeFileName, buildRecipeDoc, programInfo, buildPlanDoc, buildTableDoc, buildTableFitDoc, sectionOn, healthItems, patternOf, slotInfo, resolveSlots, fileBaseName, computeBmi, bmiBand, metrics, resolveSlots };
+  const api = { weightChartSvgText, thinWeights, buildInvoiceDoc, inr, amountInWords, buildReceiptDoc, recipeHasContent, buildCoverFitDoc, recipeFileName, buildRecipeDoc, programInfo, buildPlanDoc, buildTableDoc, buildTableFitDoc, sectionOn, healthItems, patternOf, slotInfo, resolveSlots, fileBaseName, computeBmi, bmiBand, metrics, resolveSlots };
   for (const k of ["buildPlanDoc", "buildTableDoc", "buildTableFitDoc", "buildRecipeDoc", "buildCoverFitDoc", "buildReceiptDoc", "buildInvoiceDoc"]) { const f = api[k]; api[k] = (...a) => withFonts(f(...a)); }
   api.FONT_FILES = { main: { 400: "poppins-full-400.woff", 600: "poppins-full-600.woff" }, sym: { 400: "sym-400.woff", 600: "sym-600.woff" } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

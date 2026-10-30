@@ -156,19 +156,34 @@ export function autoGrow(ta) { const f = () => { ta.style.height = "auto"; ta.st
 
 // ---------- weight chart for the screen ----------
 export function weightChartSvg(log, color = "#2BA39A") {
-  const pts = [...log].filter((p) => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && isFinite(+p.kg)).map((p) => ({ date: p.date, kg: +p.kg }))
-    .sort((a, b) => a.date.localeCompare(b.date)).slice(-Math.max(2, +store.settingsRO.output.chartMaxPoints || 12));
-  if (pts.length < 2) return `<div class="empty small">The chart appears after 2 weigh-ins.</div>`;
-  const W = 600, H = 190, L = 38, R = 12, T = 12, B = 26;
-  const v = pts.map((p) => p.kg), lo = Math.floor(Math.min(...v) - 0.5), hi = Math.ceil(Math.max(...v) + 0.5);
-  const X = (i) => L + ((W - L - R) * i) / (pts.length - 1), Y = (k) => T + (H - T - B) * (1 - (k - lo) / (hi - lo));
-  const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.kg).toFixed(1)}`).join(" ");
-  const ticks = [hi, (lo + hi) / 2, lo].map((k) => `<line x1="${L}" x2="${W - R}" y1="${Y(k)}" y2="${Y(k)}" stroke="#E3E8EE"/><text x="${L - 6}" y="${Y(k) + 4}" text-anchor="end" font-size="11" fill="#7A8594">${k}</text>`).join("");
-  const labels = [0, pts.length - 1].map((i) => `<text x="${X(i)}" y="${H - 6}" text-anchor="${i ? "end" : "start"}" font-size="11" fill="#7A8594">${fmtDate(pts[i].date)}</text>`).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight chart">${ticks}
-    <polygon points="${L},${Y(lo)} ${line} ${X(pts.length - 1)},${Y(lo)}" fill="${color}" fill-opacity=".12"/>
-    <line x1="${L}" x2="${W - R}" y1="${Y(v[0])}" y2="${Y(v[0])}" stroke="#7A8594" stroke-dasharray="4 4"/>
-    <polyline points="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-    ${pts.map((p, i) => `<circle cx="${X(i)}" cy="${Y(p.kg)}" r="${i === pts.length - 1 ? 5 : 3.5}" fill="${i === pts.length - 1 ? "#E5493A" : color}" stroke="#fff" stroke-width="1.5"><title>${fmtDate(p.date)}: ${p.kg} kg</title></circle>`).join("")}
-    ${labels}</svg>`;
+  // same chart as the PDF (whole history, thinned to the max points, start/latest/lowest/highest kept)
+  const dark = document.documentElement.dataset.theme === "dark";
+  const r = DietRender.weightChartSvgText(log, { w: 600, h: 200, max: +store.settingsRO.output.chartMaxPoints || 20, font: "Poppins, sans-serif",
+    sizes: { tick: 11, label: 11 }, left: 38, bottom: 26, top: 12, right: 12, labelPx: 60, titles: true, stroke: 2.5,
+    colors: { line: dark ? "#3CC1B6" : color, muted: dark ? "#98A4B3" : "#7A8594", grid: dark ? "#2B3543" : "#E3E8EE", last: "#E5493A", first: dark ? "#A9C2EE" : "#1E3A6B" },
+    dot: { r: 3.5, first: 4.2, last: 5 } });
+  if (!r) return `<div class="empty small">The chart appears after 2 weigh-ins.</div>`;
+  const note = r.total > r.points ? `<div class="tiny muted" style="text-align:right;margin-top:2px">${r.total} weigh-ins · ${r.points} shown</div>` : "";
+  return r.svg.replace("<svg ", '<svg role="img" aria-label="Weight chart" style="width:100%;height:auto" ') + note;
 }
+
+// ---------- long lists: newest first, "Show older (N more)" · "Show all" ----------
+// How far each list is opened lasts while you stay on the page (add / edit / delete keep it) and resets when you open another page.
+const listState = new Map(), keptOpen = new Set();
+export function resetLists() { listState.clear(); keptOpen.clear(); }
+export function moreList(key, items, first, step, redraw) {
+  const st = listState.get(key) || { n: first }; st.first = first; st.step = step; st.redraw = redraw; listState.set(key, st);
+  const n = Math.max(first, st.n), left = Math.max(0, items.length - n);
+  const bar = left ? html`<div class="more-bar"><button type="button" class="btn small ghost" data-more="${key}">Show older (${left} more)</button><button type="button" class="btn small ghost" data-all="${key}">Show all ${items.length}</button></div>` : "";
+  return { items: items.slice(0, n), bar, left, total: items.length };
+}
+// <details data-keep="key" ${keepOpen("key")}> stays open after the page redraws
+export const keepOpen = (key) => raw(keptOpen.has(key) ? "open" : "");
+document.addEventListener("toggle", (e) => { const k = e.target?.dataset?.keep; if (k) e.target.open ? keptOpen.add(k) : keptOpen.delete(k); }, true);
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-more],[data-all]"); if (!b) return;
+  const st = listState.get(b.dataset.more || b.dataset.all); if (!st) return;
+  e.stopPropagation(); e.preventDefault();
+  st.n = b.dataset.all ? Infinity : Math.max(st.first, st.n) + st.step;
+  const y = window.scrollY; st.redraw(); window.scrollTo(0, y);
+}, true);

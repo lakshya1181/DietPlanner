@@ -62,13 +62,14 @@ export function openExport(client, plan, opts = {}) {
           el.querySelector("#acts").innerHTML = String(html`
             ${oneTap ? files.map((f, i) => html`<button class="btn ghost" data-dl="${i}">${icon("download")} ${f.type === "application/pdf" ? "PDF" : "PNG"}</button>`)
               : html`<button class="btn ghost" id="dl">${icon("download")} Download</button>`}
-            ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
+            ${share ? files.map((f, i) => html`<button class="btn teal" data-sh="${i}">${icon("share")} ${files.length > 1 ? (f.type === "application/pdf" ? "Share PDF" : "Share PNG") : "Share"}</button>`) : ""}`);
           el.querySelector("#dl")?.addEventListener("click", () => { downloadFiles(files); toast("Downloading…"); });
           el.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () => { downloadFiles([files[+b.dataset.dl]]); toast("Downloading…"); }));
-          el.querySelector("#sh")?.addEventListener("click", async () => {
-            try { await shareFiles(files, DietRender.fileBaseName(client, plan)); close("shared"); }
-            catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
-          });
+          // one file per Share button (WhatsApp takes one kind of file at a time); the window stays open for the other file
+          el.querySelectorAll("[data-sh]").forEach((b) => b.addEventListener("click", async () => {
+            try { await shareFiles([files[+b.dataset.sh]]); b.innerHTML = `${String(icon("check"))} Shared`; }
+            catch (e) { if (e.name !== "AbortError") toast("Couldn't share directly – tap Download, then attach the file in WhatsApp.", 5000); }
+          }));
         } catch (e) {
           console.error(e); toast("Export failed: " + e.message, 5000);
           go.disabled = false; sync();
@@ -113,7 +114,7 @@ export function openRecipeExport(recipes) {
             ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
           el.querySelector("#dl").onclick = () => { downloadFiles([file]); toast("Downloading…"); };
           el.querySelector("#sh")?.addEventListener("click", async () => {
-            try { await shareFiles([file], file.name); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
+            try { await shareFiles([file]); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Couldn't share directly – tap Download, then attach the file in WhatsApp.", 5000); }
           });
         } catch (e) { console.error(e); toast("Export failed: " + e.message, 5000); go.disabled = false; go.textContent = "Create PDF"; }
       });
@@ -143,7 +144,7 @@ export function openReceiptExport(r) {
           ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
         el.querySelector("#dl").onclick = () => { downloadFiles([file]); toast("Downloading…"); };
         el.querySelector("#sh")?.addEventListener("click", async () => {
-          try { await shareFiles([file], file.name); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
+          try { await shareFiles([file]); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Couldn't share directly – tap Download, then attach the file in WhatsApp.", 5000); }
         });
       } catch (e) { console.error(e); el.querySelector("#result").innerHTML = ""; toast("Receipt failed: " + e.message, 5000); }
     },
@@ -172,7 +173,7 @@ export function openInvoiceExport(r) {
           ${share ? html`<button class="btn teal" id="sh">${icon("share")} Share</button>` : ""}`);
         el.querySelector("#dl").onclick = () => { downloadFiles([file]); toast("Downloading…"); };
         el.querySelector("#sh")?.addEventListener("click", async () => {
-          try { await shareFiles([file], file.name); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Sharing failed: " + e.message, 4000); }
+          try { await shareFiles([file]); close("shared"); } catch (e) { if (e.name !== "AbortError") toast("Couldn't share directly – tap Download, then attach the file in WhatsApp.", 5000); }
         });
       } catch (e) { console.error(e); el.querySelector("#result").innerHTML = ""; toast("Invoice failed: " + e.message, 5000); }
     },

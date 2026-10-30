@@ -1,7 +1,7 @@
 // Payments: lives inside the Clients tab ("Payments" filter) – never on the client's diet page or in diet PDFs.
 // client.packages = what was sold (name, fee, start), client.payments = money received (date, amount, mode, receipt no).
 import { store, normText, todayIso, uid } from "../store.js";
-import { html, icon, toast, modal, confirmBox, fmtDate, initials, avatarColor } from "../ui.js";
+import { html, icon, toast, modal, confirmBox, fmtDate, initials, avatarColor, moreList } from "../ui.js";
 import { paymentSummary, receiptFigures } from "../model.js";
 import { openReceiptExport, openInvoiceExport } from "./exportDialog.js";
 import { local } from "../store.js";
@@ -10,7 +10,7 @@ const inr = (n) => DietRender.inr(n);
 const monthKey = (iso) => String(iso || "").slice(0, 7);
 
 // ---------- list inside the Clients tab ----------
-export function paymentsPanel(rows, sub, searching) {
+export function paymentsPanel(rows, sub, searching, redraw) {
   const all = rows.map((c) => ({ c, s: paymentSummary(c) }));
   const thisMonth = monthKey(todayIso());
   // totals follow the search: with a search typed they cover the clients shown
@@ -19,11 +19,12 @@ export function paymentsPanel(rows, sub, searching) {
   const dueCount = all.filter((x) => x.s.due > 0).length;
   let list;
   if (sub === "recent") {
-    const pays = all.flatMap(({ c }) => (c.payments || []).map((p) => ({ c, p }))).sort((a, b) => b.p.date.localeCompare(a.p.date) || String(b.p.at || "").localeCompare(String(a.p.at || ""))).slice(0, 60);
-    list = pays.length ? html`${pays.map(({ c, p }) => html`<a class="list-item" href="#/payments/${c.id}">
+    const pays = all.flatMap(({ c }) => (c.payments || []).map((p) => ({ c, p }))).sort((a, b) => b.p.date.localeCompare(a.p.date) || String(b.p.at || "").localeCompare(String(a.p.at || "")));
+    const pl = moreList("recentPays", pays, 30, 30, redraw || (() => {}));
+    list = pays.length ? html`${pl.items.map(({ c, p }) => html`<a class="list-item" href="#/payments/${c.id}">
         <div class="avatar" style="background:${avatarColor(c.name)}">${initials(c.name)}</div>
         <div class="grow"><b>${c.name}</b><div class="small muted">${fmtDate(p.date, { year: true })} · ${p.mode || ""}${p.receiptNo ? ` · ${p.receiptNo}` : ""}</div></div>
-        <b style="color:var(--green)">${inr(p.amount)}</b></a>`)}` : html`<div class="empty">${icon("check")}<div>No payments recorded yet.</div></div>`;
+        <b style="color:var(--green)">${inr(p.amount)}</b></a>`)}${pl.bar}` : html`<div class="empty">${icon("check")}<div>No payments recorded yet.</div></div>`;
   } else {
     const shown = all.filter(({ s }) => (sub === "due" ? s.due > 0 : s.packages.length || s.payments.length))
       .sort((a, b) => (sub === "due" ? b.s.due - a.s.due : 0) || a.c.name.localeCompare(b.c.name));
@@ -55,6 +56,7 @@ export default function clientPayments(ctx, id) {
     const c = store.client(id); if (!c) return ctx.goReplace("#/clients");
     ctx.title(`Payments · ${c.name}`);
     const s = paymentSummary(c);
+    const kl = moreList("packages", s.packages, 5, 5, draw), yl = moreList("payments", s.payments, 10, 10, draw);
     v.innerHTML = String(html`
       <div class="card"><div class="row"><div class="avatar" style="background:${avatarColor(c.name)};width:46px;height:46px">${initials(c.name)}</div>
         <div class="grow"><b>${c.name}</b><div class="small muted">${[c.code, c.phone && `+${c.phoneCode || "91"} ${c.phone}`].filter(Boolean).join(" · ")}</div></div></div>
@@ -64,21 +66,21 @@ export default function clientPayments(ctx, id) {
           <div class="mini-stat"><div class="tiny muted">${s.extra ? "ADVANCE" : "DUE"}</div><b style="color:${s.due ? "var(--coral)" : "var(--navy)"}">${inr(s.extra || s.due)}</b></div></div></div>
 
       <div class="card"><div class="card-head"><h2>Packages</h2><button class="btn small ghost" id="addPkg">${icon("plus")} Package</button></div>
-        ${s.packages.length ? html`<p class="tiny muted" style="margin:0 0 6px">Payments are counted against the oldest package first.</p><div class="list">${s.packages.map((k) => { return html`<div class="list-item">
+        ${s.packages.length ? html`<p class="tiny muted" style="margin:0 0 6px">Payments are counted against the oldest package first.</p><div class="list">${kl.items.map((k) => { return html`<div class="list-item">
           <div class="grow"><b>${k.name || "Package"}</b>${(() => { const iv = (c.invoices || []).filter((x) => x.packageId === k.id).at(-1); return iv ? html`<div class="tiny muted">Last invoice ${iv.no} · ${fmtDate(iv.date)}</div>` : ""; })()}<div class="small muted">${k.start ? (k.end ? `${fmtDate(k.start)} – ${fmtDate(k.end, { year: true })}${k.end < todayIso() ? " (ended)" : ""} · ` : `From ${fmtDate(k.start, { year: true })} · `) : ""}${k.discount?.amount ? html`Fee <s>${inr(k.price)}</s> <b style="color:var(--navy)">${inr(k.fee)}</b> <span class="badge green">${k.discount.type === "pct" ? `${k.discount.value}% off` : `${inr(k.discount.amount)} off`}</span>` : html`Fee ${inr(k.fee)}`} · Paid ${inr(k.paid)}${k.note ? ` · ${k.note}` : ""}</div></div>
           ${k.due <= 0 ? html`<span class="badge green">Paid</span>` : html`<span class="badge red">Due ${inr(k.due)}</span>`}
           <button class="btn small ghost" data-invoice="${k.id}">${icon("file")} Invoice</button>
           <button class="icon-btn" data-editpkg="${k.id}" aria-label="Edit package">${icon("edit")}</button>
-          <button class="icon-btn danger" data-delpkg="${k.id}" aria-label="Delete package">${icon("trash")}</button></div>`; })}</div>`
+          <button class="icon-btn danger" data-delpkg="${k.id}" aria-label="Delete package">${icon("trash")}</button></div>`; })}</div>${kl.bar}`
         : html`<p class="small muted">Add the package (e.g. "3-month program", ₹6,000) so the app can show what's due. You can record payments without one too.</p>`}</div>
 
       <div class="card"><div class="card-head"><h2>Payments received</h2><button class="btn small teal" id="addPay">${icon("plus")} Payment</button></div>
-        ${s.payments.length ? html`<div class="list">${s.payments.map((p) => html`<div class="list-item">
+        ${s.payments.length ? html`<div class="list">${yl.items.map((p) => html`<div class="list-item">
           <div class="grow"><b style="color:var(--green)">${inr(p.amount)}</b> <span class="small muted">· ${p.mode || ""}</span>
             <div class="small muted">${fmtDate(p.date, { weekday: true, year: true })}${p.receiptNo ? ` · ${p.receiptNo}` : ""}${p.note ? ` · ${p.note}` : ""}</div></div>
           <button class="btn small ghost" data-receipt="${p.id}">${icon("file")} Receipt</button>
           <button class="icon-btn" data-editpay="${p.id}" aria-label="Edit payment">${icon("edit")}</button>
-          <button class="icon-btn danger" data-delpay="${p.id}" aria-label="Delete payment">${icon("trash")}</button></div>`)}</div>`
+          <button class="icon-btn danger" data-delpay="${p.id}" aria-label="Delete payment">${icon("trash")}</button></div>`)}</div>${yl.bar}`
         : html`<div class="empty small">No payments yet.</div>`}</div>`);
   };
 

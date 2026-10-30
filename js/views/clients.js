@@ -28,7 +28,7 @@ export default function clients(ctx) {
       .filter(({ s }) => filter === "all" || filter === "pay" || (filter === "active" && ["active", "ending", "upcoming"].includes(s.key))
         || (filter === "attention" && ["ending", "ended"].includes(s.key)) || (filter === "none" && s.key === "none") || (filter === "hold" && s.key === "hold"))
       .sort((a, b) => a.c.name.localeCompare(b.c.name));
-    if (filter === "pay") { v.querySelector("#listWrap").innerHTML = String(paymentsPanel(rows.map((r) => r.c), paySub, !!n)); v.querySelector(".fab").hidden = true; return; }
+    if (filter === "pay") { v.querySelector("#listWrap").innerHTML = String(paymentsPanel(rows.map((r) => r.c), paySub, !!n, draw)); v.querySelector(".fab").hidden = true; return; }
     v.querySelector(".fab").hidden = false;
     if (!v.querySelector("#list")) v.querySelector("#listWrap").innerHTML = `<div class="card"><div class="list" id="list"></div></div>`;
     v.querySelector("#list").innerHTML = rows.length ? String(html`${rows.map(({ c, s, m }) => html`
