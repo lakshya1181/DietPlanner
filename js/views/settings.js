@@ -5,7 +5,7 @@ import * as G from "../google.js";
 import * as sync from "../sync.js";
 import { downloadBlob } from "../export.js";
 import { canInstall, installApp, connectOrSync, isIOS, isStandalone, applyTheme, themePref } from "../app.js";
-import { DEFAULT_SETTINGS, PDF_SECTIONS } from "../defaults.js";
+import { DEFAULT_SETTINGS, PDF_SECTIONS, APP_VERSION } from "../defaults.js";
 
 const trashLabel = (t) => t.kind === "client" ? `${t.item.name}${t.item.code ? ` (${t.item.code})` : ""}${t.plans?.length ? ` + ${t.plans.length} plan${t.plans.length > 1 ? "s" : ""}` : ""}`
   : t.kind === "plan" ? `${store.client(t.item.clientId)?.name || "Deleted client"} – ${t.item.days === 7 && t.item.weekNumber ? `Week ${t.item.weekNumber}` : `${t.item.days}-day plan`} from ${t.item.startDate}`
@@ -180,7 +180,7 @@ export default function settingsView(ctx) {
         <button class="btn ghost" id="demo">Add demo client</button>
         <button class="btn ghost" id="resetSettings">Reset settings</button>
       </div></div>
-    <p class="tiny muted" style="text-align:center">NutriWise Diet Planner v${window.APP_CONFIG.appVersion}</p>`);
+    <p class="tiny muted" style="text-align:center">NutriWise Diet Planner v${APP_VERSION}</p>`);
   }
 
   async function pickBackup() {

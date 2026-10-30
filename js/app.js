@@ -264,7 +264,11 @@ const fromGoogle = G.consumeRedirect();   // came back from Google's sign-in pag
       if (location.hash === "#/settings" && !store._editorDirty) ctx.refresh(); }
   }
   if ("serviceWorker" in navigator && location.protocol === "https:") {
-    navigator.serviceWorker.register("sw.js").then((reg) => {
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => {
+      // an installed app can stay open for days: look for a new version on start, when it comes back to the screen, and every 30 min
+      const check = () => reg.update().catch(() => {});
+      check(); setInterval(check, 30 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
       reg.addEventListener("updatefound", () => {
         const nw = reg.installing;
         nw?.addEventListener("statechange", () => { if (nw.state === "installed" && navigator.serviceWorker.controller) {
